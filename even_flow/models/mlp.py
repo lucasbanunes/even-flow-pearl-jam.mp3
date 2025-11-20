@@ -1,21 +1,37 @@
 """MLP helper utilities.
 
-This module provides a small helper to build a multilayer perceptron (MLP)
-expressed as a ``torch.nn.Sequential`` module. The builder is intentionally
-minimal and expects layer sizes and activation specifiers.
+Helpers for constructing small multilayer perceptrons (MLPs) used across the
+project. The builder returns a ``torch.nn.Sequential`` model that alternates
+``nn.Linear`` layers with activation modules. Activation modules are looked
+up from the ``TORCH_MODULES`` mapping imported from ``even_flow.torch`` and
+instantiated when requested.
 
-The project uses :func:`build_mlp` when wiring small feed-forward networks for
-vector fields and other lightweight components.
+This module focuses on a compact, configuration-driven builder used by the
+vector-field and model setup code.
 """
 
+from typing import Annotated
 import torch
 import torch.nn as nn
-from . import torch_module_from_string, ModuleNameType
+from pydantic import Field
+from ..torch import TORCH_MODULES
 
 
 # Type aliases for readability
-type DimsType = list[int]
-type ActivationsType = list[ModuleNameType | None]
+type DimsType = Annotated[
+    list[int],
+    Field(
+        min_items=2,
+        help="List of layer dimensions; must have at least one entry."
+    )
+]
+type ActivationsType = Annotated[
+    list[str | None],
+    Field(
+        min_items=1,
+        help="List of activation names length should be len(dims)-1."
+    )
+]
 
 
 def build_mlp(
@@ -35,10 +51,12 @@ def build_mlp(
     dims : list[int]
         Sequence of layer sizes. For example ``[in_dim, hidden, out_dim]``.
     activations : list[str or None]
-        Sequence of activation specifiers with the same length as ``len(dims)-1``.
-        Each activation may be a module name string accepted by
-        :func:`torch_module_from_string` or ``None`` to insert no activation
-        after the corresponding linear layer.
+        Sequence of activation specifiers with the same length as
+        ``len(dims)-1``. Each entry should be either ``None`` (no activation)
+        or a string key present in the ``TORCH_MODULES`` mapping imported at
+        the top of this module. For example ``['relu', None, 'tanh']`` will
+        insert a ReLU after the first linear layer, no activation after the
+        second, and a Tanh after the third.
 
     Returns
     -------
@@ -48,12 +66,15 @@ def build_mlp(
         have an attribute ``example_input_array`` set to ``torch.randn(dims[0])``
         (useful for tracing or model inspection in some tooling).
 
-    Notes
-    -----
-    - The function does not validate that ``len(activations) == len(dims)-1``;
-      the code will implicitly zip and ignore extra entries if lengths differ.
-    - The ``example_input_array`` shape is currently a 1-D tensor; tooling
-      that expects a batch dimension may need to wrap it (e.g. ``unsqueeze(0)``).
+        Notes
+        -----
+        - The function does not validate that ``len(activations) == len(dims)-1``;
+            the code will implicitly zip and ignore extra entries if lengths differ.
+        - Activation strings are resolved via ``TORCH_MODULES[activation]`` and
+            the resulting callable is instantiated without arguments. If the
+            mapping expects constructor arguments, update the call sites accordingly.
+        - The ``example_input_array`` attribute is set to a 1-D tensor; tooling
+            that expects a batch dimension may need to wrap it (e.g. ``unsqueeze(0)``).
 
     Examples
     --------
@@ -68,6 +89,6 @@ def build_mlp(
     for input_dim, output_dim, activation in iterator:
         model.append(nn.Linear(input_dim, output_dim))
         if activation is not None:
-            model.append(torch_module_from_string(activation))
+            model.append(TORCH_MODULES[activation]())
     model.example_input_array = torch.randn(dims[0])
     return model
