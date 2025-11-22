@@ -4,13 +4,11 @@ import shutil
 from datetime import datetime, timezone
 import mlflow.entities
 from pydantic import BeforeValidator, ConfigDict, PlainSerializer
-import typer
 import lightning as L
 from lightning.pytorch.loggers import MLFlowLogger
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 import mlflow
-import torch
 
 from .dataset import MoonsDataset
 from .models import TimeEmbeddingMLPNeuralODEClassifier
@@ -27,8 +25,10 @@ class MoonsTimeEmbeddinngMLPNeuralODE(MLFlowBaseModel, YamlBaseModel):
     max_epochs: int
     model: Annotated[
         TimeEmbeddingMLPNeuralODEClassifier,
-        BeforeValidator(TimeEmbeddingMLPNeuralODEClassifier.pydantic_before_validator),
-        PlainSerializer(TimeEmbeddingMLPNeuralODEClassifier.pydantic_plain_serializer)
+        BeforeValidator(
+            TimeEmbeddingMLPNeuralODEClassifier.pydantic_before_validator),
+        PlainSerializer(
+            TimeEmbeddingMLPNeuralODEClassifier.pydantic_plain_serializer)
     ]
     monitor: str
 
@@ -130,23 +130,3 @@ class MoonsTimeEmbeddinngMLPNeuralODE(MLFlowBaseModel, YamlBaseModel):
         # onnx_path = tmp_dir / 'model.onnx'
         # self.model.to_onnx(onnx_path, export_params=True)
         # mlflow.log_artifact(str(onnx_path))
-
-
-app = typer.Typer(
-    help="Jobs related to Moons Time Embedding MLP Neural ODE."
-)
-
-
-@app.command()
-def time_embedding_neural_ode(
-    config: Annotated[
-        Path,
-        typer.Option('--config',
-                     help="Path to the yaml configuration file for the job.")
-    ]
-) -> MoonsTimeEmbeddinngMLPNeuralODE:
-    """Run a Moons Time Embedding MLP Neural ODE training job."""
-    job = MoonsTimeEmbeddinngMLPNeuralODE.from_yaml(
-        config)
-    job.run()
-    return job
