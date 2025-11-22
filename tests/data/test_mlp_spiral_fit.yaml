@@ -1,7 +1,0 @@
-activations:
-  - relu
-  - relu
-dims:
-  - 2
-  - 2
-  - 2

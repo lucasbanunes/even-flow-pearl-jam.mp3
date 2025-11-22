@@ -1,4 +1,6 @@
-from typing_extensions import Annotated
+from typing import Any, Self, Annotated
+import sys
+from random import randint
 import lightning as L
 import torch
 from pydantic import Field
@@ -127,10 +129,11 @@ def generate_series(
         all_states.append(states)
 
     all_states = torch.stack(all_states)
+    time = torch.stack([time] * n_series)
     return time, all_states
 
 
-class StableSpirals(L.LightningDataModule):
+class SpiralsDataModule(L.LightningDataModule):
 
     def __init__(self,
                  initial_state_low: InitialStateLowType = 0,
@@ -148,7 +151,7 @@ class StableSpirals(L.LightningDataModule):
                  test_samples: SamplesType = 200,
                  batch_size: BatchSizeType = 32,
                  random_state: RandomState = None,):
-        super(StableSpirals, self).__init__()
+        super(SpiralsDataModule, self).__init__()
 
         self.initial_state_low = initial_state_low
         self.initial_state_high = initial_state_high
@@ -158,14 +161,28 @@ class StableSpirals(L.LightningDataModule):
         self.y_decay = y_decay
         self.x_freq = x_freq
         self.y_freq = y_freq
-        self.batch_size = batch_size
         self.x_noise = x_noise
         self.y_noise = y_noise
-        self.random_state = random_state
+        self.batch_size = batch_size
+        self.train_samples = train_samples
+        self.val_samples = val_samples
+        self.test_samples = test_samples
+        if random_state is None:
+            self.random_state = randint(-sys.maxsize, sys.maxsize)
+        else:
+            self.random_state = random_state
 
-        self.train_series, self.train_datasetm, self._train_dataloader = self.generate_dataloader(train_samples, self.random_state)
-        self.val_series, self.val_dataset, self._val_dataloader = self.generate_dataloader(val_samples, self.random_state+1)
-        self.test_series, self.test_dataset, self._test_dataloader = self.generate_dataloader(test_samples, self.random_state+2)
+        self._train_series = None
+        self._train_dataset = None
+        self._train_dataloader = None
+
+        self._val_series = None
+        self._val_dataset = None
+        self._val_dataloader = None
+
+        self._test_series = None
+        self._test_dataset = None
+        self._test_dataloader = None
 
     def generate_dataloader(
             self,
@@ -193,10 +210,47 @@ class StableSpirals(L.LightningDataModule):
         return series, dataset, dataloader
 
     def train_dataloader(self) -> torch.utils.data.DataLoader:
+        if self._train_dataloader is None:
+            self._train_series, self._train_dataset, self._train_dataloader = self.generate_dataloader(self.train_samples, self.random_state)
         return self._train_dataloader
 
     def val_dataloader(self) -> torch.utils.data.DataLoader:
+        if self._val_dataloader is None:
+            self._val_series, self._val_dataset, self._val_dataloader = self.generate_dataloader(self.val_samples, self.random_state+1)
         return self._val_dataloader
 
     def test_dataloader(self) -> torch.utils.data.DataLoader:
+        if self._test_dataloader is None:
+            self._test_series, self._test_dataset, self._test_dataloader = self.generate_dataloader(self.test_samples, self.random_state+2)
         return self._test_dataloader
+
+    @classmethod
+    def pydantic_before_validator(cls, v: Any) -> Self:
+        if isinstance(v, cls):
+            return v
+        elif v is None:
+            return cls()
+        elif isinstance(v, dict):
+            return cls(**v)
+        else:
+            raise TypeError(f"Cannot convert {type(v)} to {cls}.")
+
+    @staticmethod
+    def pydantic_plain_serializer(v: 'SpiralsDataModule') -> dict[str, Any]:
+        return {
+            "initial_state_low": v.initial_state_low,
+            "initial_state_high": v.initial_state_high,
+            "n_timestamps": v.n_timestamps,
+            "t_step": v.t_step,
+            "x_decay": v.x_decay,
+            "y_decay": v.y_decay,
+            "x_freq": v.x_freq,
+            "y_freq": v.y_freq,
+            "x_noise": v.x_noise,
+            "y_noise": v.y_noise,
+            "train_samples": v.train_samples,
+            "val_samples": v.val_samples,
+            "test_samples": v.test_samples,
+            "batch_size": v.batch_size,
+            "random_state": v.random_state,
+        }

@@ -1,0 +1,182 @@
+from typing import Any, Self, Annotated
+import lightning as L
+from sklearn.datasets import make_moons
+import torch
+from pydantic import Field
+
+type RandomState = int | None
+
+# Annotated types with Pydantic Field validation
+type TrainSamplesType = Annotated[
+    int,
+    Field(
+        default=1000,
+        gt=0,
+        help="Number of training samples to generate."
+    )
+]
+
+type ValSamplesType = Annotated[
+    int,
+    Field(
+        default=200,
+        gt=0,
+        help="Number of validation samples to generate."
+    )
+]
+
+type TestSamplesType = Annotated[
+    int,
+    Field(
+        default=200,
+        gt=0,
+        help="Number of test samples to generate."
+    )
+]
+
+type NoiseType = Annotated[
+    float,
+    Field(
+        default=0.1,
+        ge=0.0,
+        help="Amount of homoscedastic noise to add to the data."
+    )
+]
+
+type BatchSizeType = Annotated[
+    int,
+    Field(
+        default=32,
+        gt=0,
+        help="Batch size for data loaders."
+    )
+]
+
+
+class MoonsDataset(L.LightningDataModule):
+    """
+    Lightning DataModule for generating 2D moon-shaped datasets.
+
+    This dataset creates two interleaving half circles (moons) that are commonly
+    used for testing non-linear classification algorithms. The dataset is generated
+    using sklearn's make_moons function.
+
+    Args:
+        train_samples: Number of training samples to generate
+        val_samples: Number of validation samples to generate
+        test_samples: Number of test samples to generate
+        noise: Standard deviation of Gaussian noise added to the data
+        batch_size: Batch size for all data loaders
+        random_state: Random state for reproducible data generation
+    """
+
+    def __init__(self,
+                 train_samples: TrainSamplesType = 1000,
+                 val_samples: ValSamplesType = 200,
+                 test_samples: TestSamplesType = 200,
+                 noise: NoiseType = 0.1,
+                 batch_size: BatchSizeType = 32,
+                 random_state: RandomState = 42):
+        super(MoonsDataset, self).__init__()
+
+        self.train_samples = train_samples
+        self.val_samples = val_samples
+        self.test_samples = test_samples
+        self.noise = noise
+        self.batch_size = batch_size
+        self.random_state = random_state
+
+        self._train_dataloader = None
+        self._val_dataloader = None
+        self._test_dataloader = None
+
+    def train_dataloader(self) -> torch.utils.data.DataLoader:
+        """
+        Create and return the training DataLoader.
+        Returns:
+            Training DataLoader with moon-shaped data
+        """
+        if self._train_dataloader is None:
+            self._train_dataloader = self.generate_dataloader(
+                n_samples=self.train_samples,
+                random_state=self.random_state,
+                float_label=True)
+        return self._train_dataloader
+
+    def val_dataloader(self) -> torch.utils.data.DataLoader:
+        """
+        Create and return the validation DataLoader.
+
+        Returns:
+            Validation DataLoader with moon-shaped data
+        """
+        if self._val_dataloader is None:
+            self._val_dataloader = self.generate_dataloader(
+                n_samples=self.val_samples,
+                random_state=self.random_state + 1)
+        return self._val_dataloader
+
+    def test_dataloader(self) -> torch.utils.data.DataLoader:
+        """
+        Create and return the test DataLoader.
+
+        Returns:
+            Test DataLoader with moon-shaped data
+        """
+        if self._test_dataloader is None:
+            self._test_dataloader = self.generate_dataloader(
+                n_samples=self.test_samples,
+                random_state=self.random_state + 2)
+        return self._test_dataloader
+
+    def generate_dataloader(self,
+                            n_samples: int,
+                            random_state: RandomState = 42,
+                            float_label: bool = False) -> torch.utils.data.DataLoader:
+        """
+        Generate a DataLoader with moon-shaped data.
+
+        Args:
+            n_samples: Number of samples to generate
+            random_state: Random state for reproducible generation
+
+        Returns:
+            DataLoader containing the generated moon dataset
+        """
+        moons, labels = make_moons(n_samples=n_samples,
+                                   noise=self.noise,
+                                   random_state=random_state)
+        labels = labels.reshape(-1, 1)
+        if float_label:
+            labels = labels.astype('float32')
+        else:
+            labels = labels.astype('int64')
+        dataset = torch.utils.data.TensorDataset(torch.from_numpy(moons.astype('float32')),
+                                                 torch.from_numpy(labels))
+        dataloader = torch.utils.data.DataLoader(
+            dataset, batch_size=self.batch_size)
+        return dataloader
+
+    @classmethod
+    def pydantic_before_validator(cls, v: Any) -> Self:
+        """Pydantic validator to handle various input types."""
+        if isinstance(v, cls):
+            return v
+        elif v is None:
+            return cls()
+        elif isinstance(v, dict):
+            return cls(**v)
+        else:
+            raise TypeError(f"Cannot convert {type(v)} to {cls}.")
+
+    @staticmethod
+    def pydantic_plain_serializer(v: 'MoonsDataset') -> dict[str, Any]:
+        """Pydantic serializer for converting to dictionary."""
+        return {
+            "train_samples": v.train_samples,
+            "val_samples": v.val_samples,
+            "test_samples": v.test_samples,
+            "noise": v.noise,
+            "batch_size": v.batch_size,
+            "random_state": v.random_state,
+        }

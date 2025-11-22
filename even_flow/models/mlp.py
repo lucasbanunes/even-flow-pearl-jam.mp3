@@ -10,11 +10,12 @@ This module focuses on a compact, configuration-driven builder used by the
 vector-field and model setup code.
 """
 
-from typing import Annotated
+from typing import Annotated, Any, Self
 import torch
 import torch.nn as nn
 from pydantic import Field
 from ..torch import TORCH_MODULES
+from ..utils import interleave_columns
 
 
 # Type aliases for readability
@@ -92,3 +93,60 @@ def build_mlp(
             model.append(TORCH_MODULES[activation]())
     model.example_input_array = torch.randn(dims[0])
     return model
+
+
+class TimeEmbeddingMLP(nn.Module):
+
+    def __init__(self,
+                 input_dims: int,
+                 time_embed_dims: int,
+                 time_embed_freq: float,
+                 neurons_per_layer: DimsType,
+                 activations: ActivationsType):
+        super().__init__()
+
+        self.input_dims = input_dims
+        self.time_embed_dims = time_embed_dims
+        self.time_embed_freq = time_embed_freq
+        self.model_dims = [self.input_dims +
+                           2 * (self.time_embed_dims // 2)] + neurons_per_layer
+        self.output_dims = self.model_dims[-1]
+        self.activations = activations
+        self.model = build_mlp(self.model_dims, self.activations)
+        self.nfe = 0
+
+    def time_embedding(self, t: torch.Tensor) -> torch.Tensor:
+        half_dim = self.time_embed_dims // 2
+        freq_exponents = torch.arange(0, half_dim, dtype=t.dtype) / half_dim
+        # Shape: (half_dim,)
+        freqs = 1.0 / (self.time_embed_freq ** freq_exponents)
+        args = t * freqs.view(1, half_dim)  # Shape: (batch_size, half_dim)
+        sin = torch.sin(args)
+        cos = torch.cos(args)
+        # Shape: (batch_size, time_embed_dims)
+        return interleave_columns(sin, cos)
+
+    def forward(self, t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+        t = torch.full((x.shape[0], 1), t.float().item())
+        model_input = torch.cat([x, self.time_embedding(t)], dim=-1)
+        self.nfe += 1
+        return self.model(model_input)
+
+    @classmethod
+    def pydantic_before_validator(cls, v: Any) -> Self:
+        if isinstance(v, cls):
+            return v
+        elif isinstance(v, dict):
+            return cls(**v)
+        else:
+            raise TypeError(f"Cannot convert {type(v)} to {cls}.")
+
+    @staticmethod
+    def pydantic_plain_serializer(v: 'TimeEmbeddingMLP') -> dict[str, Any]:
+        return {
+            "input_dims": v.input_dims,
+            "time_embed_dims": v.time_embed_dims,
+            "time_embed_freq": v.time_embed_freq,
+            "model_dims": v.model_dims,
+            "activations": v.activations,
+        }

@@ -10,11 +10,14 @@ dependencies = [
     "matplotlib==3.10.7",
     "mlflow==3.6.0",
     "mplhep==0.4.1",
+    "onnx>=1.19.1",
+    "onnxscript>=0.5.6",
     "scikit-learn==1.7.2",
     "seaborn==0.13.2",
     "torch==2.9.1",
     "torchdiffeq==0.2.5",
     "torchmetrics==1.8.2",
+    "torchvision>=0.24.1",
     "typer==0.20.0",
 ]
 
@@ -22,4 +25,25 @@ dependencies = [
 dev = [
     "pytest>=9.0.1",
     "pytest-env>=1.2.0",
+]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q"
+nonrecursedirs = [
+    "build",
+    "dist",
+    ".venv",
+]
+python_files = [
+    "test_*.py",
+    "*_test.py",
+]
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s | %(levelname)s | %(name)s | %(module)s | %(funcName)s | %(lineno)s | %(message)s"
+log_date_format = "%Y-%m-%d %H:%M:%S"
+pythonpath = "."
+testpaths = [
+    "tests",
 ]

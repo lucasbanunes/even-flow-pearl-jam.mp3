@@ -7,6 +7,14 @@ from pydantic import BaseModel, Field
 import mlflow
 from typer import Option
 
+
+DEFAULT_TRAINING_JOB_METRICS = {
+    'train': {},
+    'val': {},
+    'test': {},
+    'predict': {}
+}
+
 ID_TYPE_HELP = "Unique identifier for the job"
 type IdType = Annotated[
     str | None,
