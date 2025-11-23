@@ -9,7 +9,6 @@ from typer import Option
 
 from .mlflow import MLFlowLoggedClass
 
-
 DEFAULT_TRAINING_JOB_METRICS = {
     'train': {},
     'val': {},

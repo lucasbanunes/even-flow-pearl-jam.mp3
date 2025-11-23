@@ -54,6 +54,7 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(MLFlowBaseModel, YamlBaseModel):
     metrics: dict[str, dict[str, float | int]
                   ] = DEFAULT_TRAINING_JOB_METRICS.copy()
     patience: int = 10
+    verbose: bool = True
 
     @classmethod
     def from_mlflow(cls, mlflow_run: Run, prefix: str = '') -> Self:
@@ -68,27 +69,34 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(MLFlowBaseModel, YamlBaseModel):
                 prefix=f'{prefix}{cls.MODEL_PREFIX}'
             ),
             monitor=mlflow_run.data.params[f'{prefix}monitor'],
-            accelerator=mlflow_run.data.params[f'{prefix}accelerator'],
+            accelerator=mlflow_run.data.params.get(f'{prefix}accelerator', cls.model_fields['accelerator'].default),
             checkpoints_dir=mlflow_run.data.params.get(
                 f'{prefix}checkpoints_dir', None),
             datamodule=MoonsDataset.from_mlflow(mlflow_run,
                                                 prefix=f'{prefix}{cls.DATAMODULE_PREFIX}'),
             metrics=metrics,
-            patience=int(mlflow_run.data.params[f'{prefix}patience']),
+            patience=int(mlflow_run.data.params.get(f'{prefix}patience', cls.model_fields['patience'].default)),
+            verbose=bool(mlflow_run.data.params.get(f'{prefix}verbose', cls.model_fields['verbose'].default)),
         )
 
-    def to_mlflow(self, prefix: str = '') -> None:
+    def log_params(self, prefix: str = '') -> None:
         if prefix:
             prefix += "."
         mlflow.log_param(f'{prefix}max_epochs', self.max_epochs)
-        self.model.to_mlflow(prefix=f'{prefix}{self.MODEL_PREFIX}')
         mlflow.log_param(f'{prefix}monitor', self.monitor)
         mlflow.log_param(f'{prefix}accelerator', self.accelerator)
         if self.checkpoints_dir:
             mlflow.log_param(f'{prefix}checkpoints_dir',
                              str(self.checkpoints_dir))
-        self.datamodule.to_mlflow(prefix=f'{prefix}{self.DATAMODULE_PREFIX}')
         mlflow.log_param(f'{prefix}patience', self.patience)
+        mlflow.log_param(f'{prefix}verbose', self.verbose)
+
+    def to_mlflow(self, prefix: str = '') -> None:
+        if prefix:
+            prefix += "."
+        self.log_params(prefix=prefix)
+        self.model.to_mlflow(prefix=f'{prefix}{self.MODEL_PREFIX}')
+        self.datamodule.to_mlflow(prefix=f'{prefix}{self.DATAMODULE_PREFIX}')
         with TemporaryDirectory() as tmp_dir:
             tmp_dir = Path(tmp_dir)
             self.log_metrics(tmp_dir)
@@ -97,12 +105,7 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(MLFlowBaseModel, YamlBaseModel):
 
         logger = get_logger()
 
-        mlflow.log_param('max_epochs', self.max_epochs)
-        mlflow.log_param('monitor', self.monitor)
-        mlflow.log_param('accelerator', self.accelerator)
-        if self.checkpoints_dir:
-            mlflow.log_param('checkpoints_dir', str(self.checkpoints_dir))
-        mlflow.log_param('patience', self.patience)
+        self.log_params()
         self.datamodule.to_mlflow(prefix=self.DATAMODULE_PREFIX)
 
         mlflow_client = mlflow.MlflowClient()
@@ -185,6 +188,7 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(MLFlowBaseModel, YamlBaseModel):
             trainer.test(
                 model=self.model,
                 dataloaders=loader,
+                verbose=self.verbose
             )
             self.metrics[dataset]['nfe'] = self.model.vector_field.nfe
             dataset_metrics = self.model.get_test_metrics()
@@ -193,7 +197,6 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(MLFlowBaseModel, YamlBaseModel):
             self.model.reset_metrics()
 
         self.log_metrics(tmp_dir)
-        self.log_quiver_plot()
 
     def log_metrics(self, tmp_dir: Path):
         for dataset, metrics in self.metrics.items():
@@ -205,7 +208,7 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(MLFlowBaseModel, YamlBaseModel):
             json.dump(self.metrics, f, indent=4)
         mlflow.log_artifact(str(metrics_json))
 
-    def log_quiver_plot(self):
+    def quiver_plot(self) -> plt.Figure:
         X, Y = torch.meshgrid(torch.linspace(-1.5, 2.5, 20),
                               torch.linspace(-1.0, 1.5, 20), indexing='ij')
         grid_points = torch.stack([X.reshape(-1), Y.reshape(-1)], dim=1)
@@ -224,4 +227,4 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(MLFlowBaseModel, YamlBaseModel):
             ylabel='Y'
         )
         fig.tight_layout()
-        mlflow.log_figure(fig, self.QUIVER_PLOT_ARTIFACT_PATH)
+        return fig

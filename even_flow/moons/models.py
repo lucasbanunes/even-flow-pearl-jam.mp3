@@ -134,13 +134,15 @@ class TimeEmbeddingMLPNeuralODEClassifier(L.LightningModule, MLFlowLoggedClass):
         y = self.classification_head(xt[-1])
         return y
 
-    def trajectory(self, x: torch.Tensor) -> torch.Tensor:
+    def trajectory(self, x: torch.Tensor, integration_times: torch.Tensor) -> torch.Tensor:
         """Compute the full trajectory of the neural ODE for input x.
 
         Parameters
         ----------
         x : torch.Tensor
             Input tensor of shape (batch_size, input_dims).
+        integration_times : torch.Tensor
+            1D tensor of time points at which to evaluate the trajectory.
 
         Returns
         -------
@@ -148,15 +150,14 @@ class TimeEmbeddingMLPNeuralODEClassifier(L.LightningModule, MLFlowLoggedClass):
             Trajectory tensor of shape (time_steps, batch_size, output_dims).
         """
         xt = odeint(self.vector_field, x,
-                    self.integration_time.type_as(x),
+                    integration_times.type_as(x),
                     method=self.solver,
                     atol=self.atol, rtol=self.rtol)
         return xt
 
     def quiver(self, x: torch.Tensor) -> torch.Tensor:
         """Compute the vector field (time derivatives) at input x."""
-        t = torch.zeros(x.shape[0], 1).type_as(x)
-        dxdt = self.vector_field(t, x)
+        dxdt = self.vector_field(torch.Tensor([0.]), x)
         return dxdt
 
     def training_step(self,
