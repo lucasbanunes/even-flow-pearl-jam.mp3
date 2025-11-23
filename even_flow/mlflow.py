@@ -1,4 +1,5 @@
-from typing import Generator
+from abc import ABC, abstractmethod
+from typing import Generator, Self
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from contextlib import contextmanager
@@ -29,3 +30,27 @@ def tmp_artifact_download(run_id: str,
             artifact_path=artifact_path,
             dst_path=tmp_dir
         ))
+
+
+class MLFlowLoggedClass(ABC):
+
+    @abstractmethod
+    def to_mlflow(self, prefix: str = '') -> None:
+        raise NotImplementedError(
+            "to_mlflow method must be implemented by subclasses.")
+
+    @classmethod
+    @abstractmethod
+    def from_mlflow(cls, mlflow_run: mlflow.entities.Run,
+                    prefix: str = '') -> Self:
+        raise NotImplementedError(
+            "from_mlflow method must be implemented by subclasses.")
+
+    @classmethod
+    def from_mlflow_run_id(cls, run_id: str, prefix: str = '') -> Self:
+        mlflow_client = mlflow.MlflowClient()
+        mlflow_run = mlflow_client.get_run(run_id)
+        instance = cls.from_mlflow(mlflow_run, prefix=prefix)
+        instance.id_ = run_id
+        instance.name = mlflow_run.data.tags.get('mlflow.runName', None)
+        return instance

@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Annotated
 import typer
 
-from .jobs import MoonsTimeEmbeddinngMLPNeuralODE
+from .jobs import MoonsTimeEmbeddinngMLPNeuralODEJob
 
 app = typer.Typer(
     help="Jobs for fitting a classifier on the Moons dataset."
@@ -16,9 +16,9 @@ def time_embedding_neural_ode(
         typer.Option('--config',
                      help="Path to the yaml configuration file for the job.")
     ]
-) -> MoonsTimeEmbeddinngMLPNeuralODE:
+) -> MoonsTimeEmbeddinngMLPNeuralODEJob:
     """Run a Moons Time Embedding MLP Neural ODE training job."""
-    job = MoonsTimeEmbeddinngMLPNeuralODE.from_yaml(
+    job = MoonsTimeEmbeddinngMLPNeuralODEJob.from_yaml(
         config)
     job.run()
     return job

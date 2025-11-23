@@ -12,9 +12,7 @@ import lightning as L
 import mlflow
 from mlflow.entities import Run
 
-from even_flow.mlflow import tmp_artifact_download
-
-
+from ..mlflow import tmp_artifact_download, MLFlowLoggedClass
 from ..metrics import BCELogits
 from ..models.mlp import ActivationsType, DimsType, TimeEmbeddingMLP
 
@@ -59,7 +57,7 @@ type LearningRateType = Annotated[
 ]
 
 
-class TimeEmbeddingMLPNeuralODEClassifier(L.LightningModule):
+class TimeEmbeddingMLPNeuralODEClassifier(L.LightningModule, MLFlowLoggedClass):
     """LightningModule wrapping a neural ODE with time-embedded MLP for
     classification tasks.
     """
@@ -239,17 +237,17 @@ class TimeEmbeddingMLPNeuralODEClassifier(L.LightningModule):
                   checkpoint_path: str | None = None):
         if prefix:
             prefix += "."
-        mlflow.log_param(prefix + "input_dims", self.input_dims)
-        mlflow.log_param(prefix + "time_embed_dims", self.time_embed_dims)
-        mlflow.log_param(prefix + "time_embed_freq", self.time_embed_freq)
-        mlflow.log_param(prefix + "neurons_per_layer", self.neurons_per_layer)
-        mlflow.log_param(prefix + "activations", self.activations)
-        mlflow.log_param(prefix + "n_classes", self.n_classes)
-        mlflow.log_param(prefix + "adjoint", self.adjoint)
-        mlflow.log_param(prefix + "solver", self.solver)
-        mlflow.log_param(prefix + "atol", self.atol)
-        mlflow.log_param(prefix + "rtol", self.rtol)
-        mlflow.log_param(prefix + "learning_rate", self.learning_rate)
+        mlflow.log_param(f"{prefix}input_dims", self.input_dims)
+        mlflow.log_param(f"{prefix}time_embed_dims", self.time_embed_dims)
+        mlflow.log_param(f"{prefix}time_embed_freq", self.time_embed_freq)
+        mlflow.log_param(f"{prefix}neurons_per_layer", self.neurons_per_layer)
+        mlflow.log_param(f"{prefix}activations", self.activations)
+        mlflow.log_param(f"{prefix}n_classes", self.n_classes)
+        mlflow.log_param(f"{prefix}adjoint", self.adjoint)
+        mlflow.log_param(f"{prefix}solver", self.solver)
+        mlflow.log_param(f"{prefix}atol", self.atol)
+        mlflow.log_param(f"{prefix}rtol", self.rtol)
+        mlflow.log_param(f"{prefix}learning_rate", self.learning_rate)
         mlflow.pytorch.log_model(
             pytorch_model=self,
             name=model_name,
@@ -261,7 +259,7 @@ class TimeEmbeddingMLPNeuralODEClassifier(L.LightningModule):
                 mlflow.log_artifact(ckpt_path)
 
     @classmethod
-    def from_mlflow(cls, mlflow_run: Run, model_name: str = "model") -> Self:
+    def from_mlflow(cls, mlflow_run: Run, prefix: str = '', model_name: str = "model") -> Self:
         with tmp_artifact_download(
             run_id=mlflow_run.info.run_id,
             artifact_path=f'{model_name}.ckpt'

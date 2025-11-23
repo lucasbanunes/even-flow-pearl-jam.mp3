@@ -13,5 +13,5 @@ model:
   activations:
     - relu
     - relu
-    - sigmoid
+    - relu
 monitor: val_loss

@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Annotated
@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 import mlflow
 from typer import Option
+
+from .mlflow import MLFlowLoggedClass
 
 
 DEFAULT_TRAINING_JOB_METRICS = {
@@ -40,7 +42,7 @@ type ConfigOption = Annotated[
 ]
 
 
-class MLFlowBaseModel(BaseModel, ABC):
+class MLFlowBaseModel(BaseModel, MLFlowLoggedClass):
     """BaseModel with MLflow logging capabilities."""
 
     # MLFLOW_LOGGER_ATTRIBUTES: ClassVar[list[str] | None] = None
@@ -59,6 +61,7 @@ class MLFlowBaseModel(BaseModel, ABC):
         with (mlflow.start_run(run_name=self.name) as active_run,
               TemporaryDirectory() as tmp_dir):
             self.id_ = active_run.info.run_id
+            self.name = active_run.data.tags['mlflow.runName']
             exec_start = datetime.now(timezone.utc).timestamp()
             mlflow.log_metric("exec_start", exec_start)
             self._run(Path(tmp_dir), active_run)

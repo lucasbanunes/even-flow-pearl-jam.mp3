@@ -3,6 +3,11 @@ import lightning as L
 from sklearn.datasets import make_moons
 import torch
 from pydantic import Field
+import mlflow
+from mlflow.entities import Run
+
+
+from ..mlflow import MLFlowLoggedClass
 
 type RandomState = int | None
 
@@ -53,7 +58,7 @@ type BatchSizeType = Annotated[
 ]
 
 
-class MoonsDataset(L.LightningDataModule):
+class MoonsDataset(L.LightningDataModule, MLFlowLoggedClass):
     """
     Lightning DataModule for generating 2D moon-shaped datasets.
 
@@ -180,3 +185,30 @@ class MoonsDataset(L.LightningDataModule):
             "batch_size": v.batch_size,
             "random_state": v.random_state,
         }
+
+    def to_mlflow(self, prefix: str = "") -> dict[str, Any]:
+        """Log dataset parameters to MLflow."""
+        if prefix:
+            prefix += "."
+        mlflow.log_params({
+            f"{prefix}train_samples": self.train_samples,
+            f"{prefix}val_samples": self.val_samples,
+            f"{prefix}test_samples": self.test_samples,
+            f"{prefix}noise": self.noise,
+            f"{prefix}batch_size": self.batch_size,
+            f"{prefix}random_state": self.random_state,
+        })
+
+    @classmethod
+    def from_mlflow(cls, mlflow_run: Run, prefix: str = "") -> Self:
+        """Create an instance from MLflow logged parameters."""
+        if prefix:
+            prefix += "."
+        return cls(
+            train_samples=int(mlflow_run.data.params[f'{prefix}train_samples']),
+            val_samples=int(mlflow_run.data.params[f'{prefix}val_samples']),
+            test_samples=int(mlflow_run.data.params[f'{prefix}test_samples']),
+            noise=float(mlflow_run.data.params[f'{prefix}noise']),
+            batch_size=int(mlflow_run.data.params[f'{prefix}batch_size']),
+            random_state=int(mlflow_run.data.params[f'{prefix}random_state']),
+        )
