@@ -3,16 +3,15 @@ datamodule:
 max_epochs: 3
 model:
   n_classes: 2
-  vector_field:
-    input_dims: 2
-    time_embed_dims: 3
-    time_embed_freq: 10
-    neurons_per_layer:
-      - 13
-      - 13
-      - 2
-    activations:
-      - relu
-      - relu
-      - sigmoid
+  input_dims: 2
+  time_embed_dims: 3
+  time_embed_freq: 10
+  neurons_per_layer:
+    - 13
+    - 13
+    - 2
+  activations:
+    - relu
+    - relu
+    - sigmoid
 monitor: val_loss

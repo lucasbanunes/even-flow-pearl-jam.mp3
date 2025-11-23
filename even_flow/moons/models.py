@@ -1,10 +1,18 @@
+from pathlib import Path
+import shutil
+from tempfile import TemporaryDirectory
 from typing import Annotated, Any, Self
 import torch
 import torch.nn as nn
 from torchdiffeq import odeint_adjoint, odeint
 from pydantic import Field
 from torchmetrics import MetricCollection
+from torchmetrics.classification import BinaryAccuracy
 import lightning as L
+import mlflow
+from mlflow.entities import Run
+
+from even_flow.mlflow import tmp_artifact_download
 
 
 from ..metrics import BCELogits
@@ -105,7 +113,8 @@ class TimeEmbeddingMLPNeuralODEClassifier(L.LightningModule):
         self.loss_function = nn.BCEWithLogitsLoss()
 
         self.train_metrics = MetricCollection({
-            'loss': BCELogits()
+            'loss': BCELogits(),
+            'accuracy': BinaryAccuracy()
         })
         self.val_metrics = self.train_metrics.clone()
         self.test_metrics = self.val_metrics.clone()
@@ -124,6 +133,31 @@ class TimeEmbeddingMLPNeuralODEClassifier(L.LightningModule):
                          atol=self.atol, rtol=self.rtol)
         y = self.classification_head(xt[-1])
         return y
+
+    def trajectory(self, x: torch.Tensor) -> torch.Tensor:
+        """Compute the full trajectory of the neural ODE for input x.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor of shape (batch_size, input_dims).
+
+        Returns
+        -------
+        torch.Tensor
+            Trajectory tensor of shape (time_steps, batch_size, output_dims).
+        """
+        xt = odeint(self.vector_field, x,
+                    self.integration_time.type_as(x),
+                    method=self.solver,
+                    atol=self.atol, rtol=self.rtol)
+        return xt
+
+    def quiver(self, x: torch.Tensor) -> torch.Tensor:
+        """Compute the vector field (time derivatives) at input x."""
+        t = torch.zeros(x.shape[0], 1).type_as(x)
+        dxdt = self.vector_field(t, x)
+        return dxdt
 
     def training_step(self,
                       batch: tuple[torch.Tensor, torch.Tensor],
@@ -180,11 +214,6 @@ class TimeEmbeddingMLPNeuralODEClassifier(L.LightningModule):
         if isinstance(v, cls):
             return v
         elif isinstance(v, dict):
-            if 'vector_field' not in v:
-                raise KeyError(
-                    "Missing 'vector_field' key for TimeEmbeddingMLPNeuralODE.")
-            v['vector_field'] = TimeEmbeddingMLP.pydantic_before_validator(
-                v['vector_field'])
             return cls(**v)
         else:
             raise TypeError(f"Cannot convert {type(v)} to {cls}.")
@@ -197,9 +226,44 @@ class TimeEmbeddingMLPNeuralODEClassifier(L.LightningModule):
             "time_embed_freq": v.time_embed_freq,
             "neurons_per_layer": v.neurons_per_layer,
             "activations": v.activations,
+            "n_classes": v.n_classes,
             "adjoint": v.adjoint,
             "solver": v.solver,
             "atol": v.atol,
             "rtol": v.rtol,
             "learning_rate": v.learning_rate,
         }
+
+    def to_mlflow(self, prefix: str = "",
+                  model_name: str = "model",
+                  checkpoint_path: str | None = None):
+        if prefix:
+            prefix += "."
+        mlflow.log_param(prefix + "input_dims", self.input_dims)
+        mlflow.log_param(prefix + "time_embed_dims", self.time_embed_dims)
+        mlflow.log_param(prefix + "time_embed_freq", self.time_embed_freq)
+        mlflow.log_param(prefix + "neurons_per_layer", self.neurons_per_layer)
+        mlflow.log_param(prefix + "activations", self.activations)
+        mlflow.log_param(prefix + "n_classes", self.n_classes)
+        mlflow.log_param(prefix + "adjoint", self.adjoint)
+        mlflow.log_param(prefix + "solver", self.solver)
+        mlflow.log_param(prefix + "atol", self.atol)
+        mlflow.log_param(prefix + "rtol", self.rtol)
+        mlflow.log_param(prefix + "learning_rate", self.learning_rate)
+        mlflow.pytorch.log_model(
+            pytorch_model=self,
+            name=model_name,
+        )
+        if checkpoint_path is not None:
+            with TemporaryDirectory() as tmp_dir:
+                ckpt_path = Path(tmp_dir) / f'{model_name}.ckpt'
+                shutil.copy(checkpoint_path, ckpt_path)
+                mlflow.log_artifact(ckpt_path)
+
+    @classmethod
+    def from_mlflow(cls, mlflow_run: Run, model_name: str = "model") -> Self:
+        with tmp_artifact_download(
+            run_id=mlflow_run.info.run_id,
+            artifact_path=f'{model_name}.ckpt'
+        ) as ckpt_path:
+            return cls.load_from_checkpoint(ckpt_path)

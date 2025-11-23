@@ -43,6 +43,8 @@ type ConfigOption = Annotated[
 class MLFlowBaseModel(BaseModel, ABC):
     """BaseModel with MLflow logging capabilities."""
 
+    # MLFLOW_LOGGER_ATTRIBUTES: ClassVar[list[str] | None] = None
+
     id_: IdType = None
     name: NameType = None
 

@@ -1,5 +1,5 @@
 from pathlib import Path
-from even_flow.moons.jobs import time_embedding_neural_ode
+from even_flow.moons.cli import time_embedding_neural_ode
 
 
 def test_time_embedding_neural_ode(data_dir: Path):
