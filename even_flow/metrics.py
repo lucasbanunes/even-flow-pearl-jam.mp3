@@ -23,7 +23,8 @@ class BCELogits(Metric):
 
     def compute(self) -> torch.Tensor:
         if self.reduction == 'mean':
-            return self.bce_sum / self.n_samples
+            res = self.bce_sum / self.n_samples
+            return res
         elif self.reduction == 'sum':
             return self.bce_sum
 

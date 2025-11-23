@@ -10,7 +10,7 @@ app = typer.Typer(
 
 
 @app.command()
-def time_embedding_neural_ode(
+def time_embedding_mlp_neural_ode(
     config: Annotated[
         Path,
         typer.Option('--config',

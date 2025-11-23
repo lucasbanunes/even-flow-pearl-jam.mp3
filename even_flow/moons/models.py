@@ -13,7 +13,7 @@ import mlflow
 from mlflow.entities import Run
 
 from ..mlflow import tmp_artifact_download, MLFlowLoggedClass
-# from ..metrics import BCELogits
+from ..metrics import BCELogits
 from ..models.mlp import ActivationsType, DimsType, TimeEmbeddingMLP
 
 
@@ -112,7 +112,7 @@ class TimeEmbeddingMLPNeuralODEClassifier(L.LightningModule, MLFlowLoggedClass):
 
         # Removed BCELogits because it was returning nans, have to check after
         self.train_metrics = MetricCollection({
-            # 'loss': BCELogits(),
+            'loss': BCELogits(),
             'accuracy': BinaryAccuracy()
         })
         self.val_metrics = self.train_metrics.clone()
@@ -124,6 +124,7 @@ class TimeEmbeddingMLPNeuralODEClassifier(L.LightningModule, MLFlowLoggedClass):
         self.train_metrics.reset()
         self.val_metrics.reset()
         self.test_metrics.reset()
+        self.vector_field.reset_nfe()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         xt = self.odeint(self.vector_field, x,
@@ -191,15 +192,15 @@ class TimeEmbeddingMLPNeuralODEClassifier(L.LightningModule, MLFlowLoggedClass):
                   batch_idx: torch.Tensor):
         x, y = batch
         y_pred = self(x)
-        self.val_metrics.update(y_pred, y)
+        self.test_metrics.update(y_pred, y)
 
-    def on_test_epoch_end(self):
-        """Compute and log test metrics at epoch end, then reset."""
-        metric_values = self.test_metrics.compute()
-        for name, value in metric_values.items():
-            self.log(f"test_{name}", value, prog_bar=True)
-        # Reset metrics after each epoch
-        self.test_metrics.reset()
+    # def on_test_epoch_end(self):
+    #     """Compute and log test metrics at epoch end, then reset."""
+    #     metric_values = self.test_metrics.compute()
+    #     for name, value in metric_values.items():
+    #         self.log(f"test_{name}", value, prog_bar=True)
+    #     # Reset metrics after each epoch
+    #     self.test_metrics.reset()
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(
@@ -266,3 +267,8 @@ class TimeEmbeddingMLPNeuralODEClassifier(L.LightningModule, MLFlowLoggedClass):
             artifact_path=f'{model_name}.ckpt'
         ) as ckpt_path:
             return cls.load_from_checkpoint(ckpt_path)
+
+    def get_test_metrics(self) -> dict[str, float]:
+        """Compute and return test metrics as a dictionary."""
+        metric_values = self.test_metrics.compute()
+        return metric_values

@@ -179,18 +179,18 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(MLFlowBaseModel, YamlBaseModel):
             if not str(e).startswith('`predict_dataloader` must be implemented'):
                 raise e
 
+        self.model.reset_metrics()
         for dataset, loader in dataloaders.items():
-            self.model.test_metrics.reset()
-            self.model.vector_field.reset_nfe()
             logger.info(f'Evaluating best model on {dataset} dataset')
             trainer.test(
                 model=self.model,
                 dataloaders=loader,
             )
             self.metrics[dataset]['nfe'] = self.model.vector_field.nfe
-            dataset_metrics = self.model.test_metrics.compute()
+            dataset_metrics = self.model.get_test_metrics()
             dataset_metrics = {k: v.item() for k, v in dataset_metrics.items()}
             self.metrics[dataset].update(dataset_metrics)
+            self.model.reset_metrics()
 
         self.log_metrics(tmp_dir)
         self.log_quiver_plot()
