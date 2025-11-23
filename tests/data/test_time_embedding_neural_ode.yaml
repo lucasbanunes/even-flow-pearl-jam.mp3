@@ -14,4 +14,4 @@ model:
     - relu
     - relu
     - relu
-monitor: val_loss
+monitor: train_loss

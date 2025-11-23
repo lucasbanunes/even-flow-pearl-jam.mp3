@@ -1,9 +1,10 @@
 from abc import ABC, abstractmethod
-from typing import Generator, Self
+from typing import Generator, Self, Any
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from contextlib import contextmanager
 import mlflow
+import json
 
 
 @contextmanager
@@ -54,3 +55,27 @@ class MLFlowLoggedClass(ABC):
         instance.id_ = run_id
         instance.name = mlflow_run.data.tags.get('mlflow.runName', None)
         return instance
+
+
+def load_json(
+        run_id: str,
+        artifact_path: str
+) -> Any:
+    """
+    Loads a JSON file from an MLflow run artifact.
+
+    Parameters
+    ----------
+    run_id : str
+        The MLflow run ID.
+    artifact_path : str
+        The path to the artifact in MLflow.
+
+    Returns
+    -------
+    Any
+        The loaded JSON object.
+    """
+    with tmp_artifact_download(run_id, artifact_path) as tmp_path:
+        with open(tmp_path, 'r') as f:
+            return json.load(f)

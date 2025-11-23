@@ -150,3 +150,6 @@ class TimeEmbeddingMLP(nn.Module):
             "model_dims": v.model_dims,
             "activations": v.activations,
         }
+
+    def reset_nfe(self) -> None:
+        self.nfe = 0

@@ -1,4 +1,5 @@
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Annotated, Self, ClassVar
 import shutil
 from datetime import datetime, timezone
@@ -10,12 +11,14 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 import mlflow
 from mlflow.entities import Run
+import json
 
 from .dataset import MoonsDataset
 from .models import TimeEmbeddingMLPNeuralODEClassifier
 from ..jobs import MLFlowBaseModel, DEFAULT_TRAINING_JOB_METRICS
 from ..utils import get_logger
 from ..pydantic import YamlBaseModel
+from ..mlflow import load_json
 
 
 class MoonsTimeEmbeddinngMLPNeuralODEJob(MLFlowBaseModel, YamlBaseModel):
@@ -25,6 +28,7 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(MLFlowBaseModel, YamlBaseModel):
     MLFLOW_LOGGER_ATTRIBUTES: ClassVar[list[str] | None] = None
     DATAMODULE_PREFIX: ClassVar[str] = 'datamodule'
     MODEL_PREFIX: ClassVar[str] = 'model'
+    METRICS_ARTIFACT_PATH: ClassVar[str] = 'metrics.json'
 
     max_epochs: int
     model: Annotated[
@@ -43,13 +47,15 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(MLFlowBaseModel, YamlBaseModel):
         BeforeValidator(MoonsDataset.pydantic_before_validator),
         PlainSerializer(MoonsDataset.pydantic_plain_serializer)
     ] = MoonsDataset()
-    metrics: dict[str, dict[str, float]] = DEFAULT_TRAINING_JOB_METRICS.copy()
+    metrics: dict[str, dict[str, float | int]] = DEFAULT_TRAINING_JOB_METRICS.copy()
     patience: int = 10
 
     @classmethod
     def from_mlflow(cls, mlflow_run: Run, prefix: str = '') -> Self:
         if prefix:
             prefix += "."
+        metrics = load_json(mlflow_run.info.run_id,
+                            cls.METRICS_ARTIFACT_PATH)
         return cls(
             max_epochs=int(mlflow_run.data.params[f'{prefix}max_epochs']),
             model=TimeEmbeddingMLPNeuralODEClassifier.from_mlflow(
@@ -58,9 +64,11 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(MLFlowBaseModel, YamlBaseModel):
             ),
             monitor=mlflow_run.data.params[f'{prefix}monitor'],
             accelerator=mlflow_run.data.params[f'{prefix}accelerator'],
-            checkpoints_dir=mlflow_run.data.params.get(f'{prefix}checkpoints_dir', None),
+            checkpoints_dir=mlflow_run.data.params.get(
+                f'{prefix}checkpoints_dir', None),
             datamodule=MoonsDataset.from_mlflow(mlflow_run,
                                                 prefix=f'{prefix}{cls.DATAMODULE_PREFIX}'),
+            metrics=metrics,
             patience=int(mlflow_run.data.params[f'{prefix}patience']),
         )
 
@@ -72,9 +80,13 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(MLFlowBaseModel, YamlBaseModel):
         mlflow.log_param(f'{prefix}monitor', self.monitor)
         mlflow.log_param(f'{prefix}accelerator', self.accelerator)
         if self.checkpoints_dir:
-            mlflow.log_param(f'{prefix}checkpoints_dir', str(self.checkpoints_dir))
+            mlflow.log_param(f'{prefix}checkpoints_dir',
+                             str(self.checkpoints_dir))
         self.datamodule.to_mlflow(prefix=f'{prefix}{self.DATAMODULE_PREFIX}')
         mlflow.log_param(f'{prefix}patience', self.patience)
+        with TemporaryDirectory() as tmp_dir:
+            tmp_dir = Path(tmp_dir)
+            self.log_metrics(tmp_dir)
 
     def _run(self, tmp_dir: Path, run: mlflow.entities.Run):
 
@@ -142,3 +154,47 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(MLFlowBaseModel, YamlBaseModel):
                              checkpoint_path=checkpoint.best_model_path)
         logger.info('Training completed and model logged to MLFlow.')
         shutil.rmtree(str(checkpoint_dir))
+
+        dataloaders = {
+            'train': self.datamodule.train_dataloader(),
+        }
+        try:
+            dataloaders['val'] = self.datamodule.val_dataloader()
+        except Exception as e:
+            if not str(e).startswith('`val_dataloader` must be implemented'):
+                raise e
+        try:
+            dataloaders['test'] = self.datamodule.test_dataloader()
+        except Exception as e:
+            if not str(e).startswith('`test_dataloader` must be implemented'):
+                raise e
+        try:
+            dataloaders['predict'] = self.datamodule.predict_dataloader()
+        except Exception as e:
+            if not str(e).startswith('`predict_dataloader` must be implemented'):
+                raise e
+
+        for dataset, loader in dataloaders.items():
+            self.model.test_metrics.reset()
+            self.model.vector_field.reset_nfe()
+            logger.info(f'Evaluating best model on {dataset} dataset')
+            trainer.test(
+                model=self.model,
+                dataloaders=loader,
+            )
+            self.metrics[dataset]['nfe'] = self.model.vector_field.nfe
+            dataset_metrics = self.model.test_metrics.compute()
+            dataset_metrics = {k: v.item() for k, v in dataset_metrics.items()}
+            self.metrics[dataset].update(dataset_metrics)
+
+        self.log_metrics(tmp_dir)
+
+    def log_metrics(self, tmp_dir: Path):
+        for dataset, metrics in self.metrics.items():
+            for metric_name, metric_value in metrics.items():
+                mlflow.log_metric(f"{dataset}.{metric_name}", metric_value)
+
+        metrics_json = tmp_dir / self.METRICS_ARTIFACT_PATH
+        with metrics_json.open('w') as f:
+            json.dump(self.metrics, f, indent=4)
+        mlflow.log_artifact(str(metrics_json))

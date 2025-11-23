@@ -110,8 +110,9 @@ class TimeEmbeddingMLPNeuralODEClassifier(L.LightningModule, MLFlowLoggedClass):
         )
         self.loss_function = nn.BCEWithLogitsLoss()
 
+        # Removed BCELogits because it was returning nans, have to check after
         self.train_metrics = MetricCollection({
-            'loss': BCELogits(),
+            # 'loss': BCELogits(),
             'accuracy': BinaryAccuracy()
         })
         self.val_metrics = self.train_metrics.clone()
