@@ -12,6 +12,9 @@ from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 import mlflow
 from mlflow.entities import Run
 import json
+import torch
+import matplotlib.pyplot as plt
+import numpy as np
 
 from .dataset import MoonsDataset
 from .models import TimeEmbeddingMLPNeuralODEClassifier
@@ -29,6 +32,7 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(MLFlowBaseModel, YamlBaseModel):
     DATAMODULE_PREFIX: ClassVar[str] = 'datamodule'
     MODEL_PREFIX: ClassVar[str] = 'model'
     METRICS_ARTIFACT_PATH: ClassVar[str] = 'metrics.json'
+    QUIVER_PLOT_ARTIFACT_PATH: ClassVar[str] = 'quiver_plot.png'
 
     max_epochs: int
     model: Annotated[
@@ -47,7 +51,8 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(MLFlowBaseModel, YamlBaseModel):
         BeforeValidator(MoonsDataset.pydantic_before_validator),
         PlainSerializer(MoonsDataset.pydantic_plain_serializer)
     ] = MoonsDataset()
-    metrics: dict[str, dict[str, float | int]] = DEFAULT_TRAINING_JOB_METRICS.copy()
+    metrics: dict[str, dict[str, float | int]
+                  ] = DEFAULT_TRAINING_JOB_METRICS.copy()
     patience: int = 10
 
     @classmethod
@@ -188,6 +193,7 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(MLFlowBaseModel, YamlBaseModel):
             self.metrics[dataset].update(dataset_metrics)
 
         self.log_metrics(tmp_dir)
+        self.log_quiver_plot()
 
     def log_metrics(self, tmp_dir: Path):
         for dataset, metrics in self.metrics.items():
@@ -198,3 +204,24 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(MLFlowBaseModel, YamlBaseModel):
         with metrics_json.open('w') as f:
             json.dump(self.metrics, f, indent=4)
         mlflow.log_artifact(str(metrics_json))
+
+    def log_quiver_plot(self):
+        X, Y = torch.meshgrid(torch.linspace(-1.5, 2.5, 20),
+                              torch.linspace(-1.0, 1.5, 20), indexing='ij')
+        grid_points = torch.stack([X.reshape(-1), Y.reshape(-1)], dim=1)
+        dxdy = self.model.vector_field.forward(torch.Tensor([0.]), grid_points)
+        U = dxdy[:, 0].reshape(X.shape).detach().cpu().numpy()
+        V = dxdy[:, 1].reshape(Y.shape).detach().cpu().numpy()
+        M = np.hypot(U, V)
+
+        fig, ax = plt.subplots()
+        ax.grid(alpha=.3, linestyle='--')
+        q = ax.quiver(X, Y, U, V, M)
+        plt.colorbar(q, ax=ax, label='Vector Magnitude')
+        ax.set(
+            title='Learned Vector Field',
+            xlabel='X',
+            ylabel='Y'
+        )
+        fig.tight_layout()
+        mlflow.log_figure(fig, self.QUIVER_PLOT_ARTIFACT_PATH)

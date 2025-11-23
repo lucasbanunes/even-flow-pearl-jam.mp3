@@ -13,7 +13,7 @@ import mlflow
 from mlflow.entities import Run
 
 from ..mlflow import tmp_artifact_download, MLFlowLoggedClass
-from ..metrics import BCELogits
+# from ..metrics import BCELogits
 from ..models.mlp import ActivationsType, DimsType, TimeEmbeddingMLP
 
 
