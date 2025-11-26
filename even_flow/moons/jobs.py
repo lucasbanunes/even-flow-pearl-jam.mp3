@@ -228,3 +228,36 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(MLFlowBaseModel, YamlBaseModel):
         )
         fig.tight_layout()
         return fig
+
+
+class MoonsCNF(MLFlowBaseModel, YamlBaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    MODEL_CKPT_PATH: ClassVar[str] = 'model.ckpt'
+    MLFLOW_LOGGER_ATTRIBUTES: ClassVar[list[str] | None] = None
+    DATAMODULE_PREFIX: ClassVar[str] = 'datamodule'
+    MODEL_PREFIX: ClassVar[str] = 'model'
+    METRICS_ARTIFACT_PATH: ClassVar[str] = 'metrics.json'
+    QUIVER_PLOT_ARTIFACT_PATH: ClassVar[str] = 'quiver_plot.png'
+
+    max_epochs: int
+    model: Annotated[
+        TimeEmbeddingMLPNeuralODEClassifier,
+        BeforeValidator(
+            TimeEmbeddingMLPNeuralODEClassifier.pydantic_before_validator),
+        PlainSerializer(
+            TimeEmbeddingMLPNeuralODEClassifier.pydantic_plain_serializer)
+    ]
+    monitor: str
+
+    accelerator: str = 'cpu'
+    checkpoints_dir: Path | None = None
+    datamodule: Annotated[
+        MoonsDataset,
+        BeforeValidator(MoonsDataset.pydantic_before_validator),
+        PlainSerializer(MoonsDataset.pydantic_plain_serializer)
+    ] = MoonsDataset()
+    metrics: dict[str, dict[str, float | int]
+                  ] = DEFAULT_TRAINING_JOB_METRICS.copy()
+    patience: int = 10
+    verbose: bool = True
