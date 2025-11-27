@@ -1,9 +1,9 @@
-from abc import abstractmethod
+from abc import abstractmethod, ABC
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Annotated
+from typing import Annotated, Self
 from datetime import datetime, timezone
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 import mlflow
 from typer import Option
 
@@ -38,14 +38,23 @@ type NameType = Annotated[
     ),
 ]
 
+type RunType = Annotated[
+    mlflow.entities.Run | None,
+    Field(
+        description="MLflow Run associated with the class.",
+        exclude=True
+    )
+]
 
-class BaseJob(BaseModel):
+
+class BaseJob(BaseModel, ABC):
     """BaseModel with MLflow logging capabilities."""
 
-    # MLFLOW_LOGGER_ATTRIBUTES: ClassVar[list[str] | None] = None
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     id_: IdType = None
     name: NameType = None
+    # mlflow_run: RunType = None
 
     @abstractmethod
     def _run(self, tmp_dir: Path, run: mlflow.entities.Run):
@@ -65,3 +74,24 @@ class BaseJob(BaseModel):
             end_start = datetime.now(timezone.utc).timestamp()
             mlflow.log_metric('exec_end', end_start)
             mlflow.log_metric("exec_duration", end_start - exec_start)
+            self.id_ = active_run.info.run_id
+            self.name = active_run.data.tags.get('mlflow.runName', None)
+        # client = mlflow.MlflowClient()
+        # self.mlflow_run = client.get_run(self.id_)
+
+    @classmethod
+    @abstractmethod
+    def from_mlflow(cls, mlflow_run: mlflow.entities.Run,
+                    prefix: str = '') -> Self:
+        raise NotImplementedError(
+            "from_mlflow method must be implemented by subclasses.")
+
+    @classmethod
+    def from_mlflow_run_id(cls, run_id: str, prefix: str = '') -> Self:
+        mlflow_client = mlflow.MlflowClient()
+        mlflow_run = mlflow_client.get_run(run_id)
+        instance = cls.from_mlflow(mlflow_run, prefix=prefix)
+        instance.id_ = run_id
+        instance.name = mlflow_run.data.tags.get('mlflow.runName', None)
+        # instance.mlflow_run = mlflow_run
+        return instance

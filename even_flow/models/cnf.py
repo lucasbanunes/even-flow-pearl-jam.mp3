@@ -82,6 +82,8 @@ class CNF1D(L.LightningModule):
     def __init__(self,
                  model_config: 'CNF1DModel'):
         super().__init__()
+        self.save_hyperparameters(logger=False)
+
         self.vector_field = model_config.vector_field.as_nn_module()
         self.adjoint = model_config.adjoint
         if self.adjoint:
@@ -103,10 +105,10 @@ class CNF1D(L.LightningModule):
         integration_times = model_config.integration_times
         if integration_times is None:
             self.integration_times = torch.Tensor(
-                [0.0, 1.0], dtype=torch.float32)
+                [0.0, 1.0]).float()
         else:
             self.integration_times = torch.Tensor(
-                integration_times, dtype=torch.float32)
+                integration_times).float()
 
         self.solver = model_config.solver
         self.atol = model_config.atol
@@ -233,8 +235,8 @@ class CNF1DModel(MLFlowLoggedModel):
         )
     ]
     adjoint: AdjointType = True
-    base_distribution: BaseDistributionType = None
-    integration_times: IntegrationTimesType = None
+    base_distribution: BaseDistributionType = 'standard_normal'
+    integration_times: IntegrationTimesType = [0.0, 1.0]
     solver: SolverType = 'dopri5'
     atol: AtolType = 1e-5
     rtol: RtolType = 1e-5

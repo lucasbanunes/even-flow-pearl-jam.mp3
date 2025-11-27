@@ -54,7 +54,7 @@ class MLFlowLoggedModel(BaseModel, ABC):
 
     id_: IdType = None
     name: NameType = None
-    run: RunType = None
+    # mlflow_run: RunType = None
 
     @abstractmethod
     def _to_mlflow(self, prefix: str = '') -> None:
@@ -63,9 +63,10 @@ class MLFlowLoggedModel(BaseModel, ABC):
 
     def to_mlflow(self, prefix: str = '') -> None:
         self._to_mlflow(prefix)
-        self.id_ = mlflow.active_run().info.run_id
-        self.name = mlflow.active_run().data.tags.get('mlflow.runName', None)
-        self.run = mlflow.active_run()
+        mlflow_run = mlflow.active_run()
+        self.id_ = mlflow_run.info.run_id
+        self.name = mlflow_run.data.tags.get('mlflow.runName', None)
+        # self.mlflow_run = mlflow.active_run()
 
     @classmethod
     @abstractmethod
@@ -81,7 +82,7 @@ class MLFlowLoggedModel(BaseModel, ABC):
         instance = cls.from_mlflow(mlflow_run, prefix=prefix)
         instance.id_ = run_id
         instance.name = mlflow_run.data.tags.get('mlflow.runName', None)
-        instance.run = mlflow_run
+        # instance.mlflow_run = mlflow_run
         return instance
 
 

@@ -1,5 +1,4 @@
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Annotated, Self, ClassVar
 import shutil
 from datetime import datetime, timezone
@@ -95,16 +94,6 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(BaseJob, YamlBaseModel):
                              str(self.checkpoints_dir))
         mlflow.log_param(f'{prefix}patience', self.patience)
         mlflow.log_param(f'{prefix}verbose', self.verbose)
-
-    def to_mlflow(self, prefix: str = '') -> None:
-        if prefix:
-            prefix += "."
-        self.log_params(prefix=prefix)
-        self.model.to_mlflow(prefix=f'{prefix}{self.MODEL_PREFIX}')
-        self.datamodule.to_mlflow(prefix=f'{prefix}{self.DATAMODULE_PREFIX}')
-        with TemporaryDirectory() as tmp_dir:
-            tmp_dir = Path(tmp_dir)
-            self.log_metrics(tmp_dir)
 
     def _run(self, tmp_dir: Path, run: mlflow.entities.Run):
 
@@ -235,7 +224,7 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(BaseJob, YamlBaseModel):
         return fig
 
 
-class MoonsTimeEmbeddingMLPCNF(BaseJob, YamlBaseModel):
+class MoonsTimeEmbeddingMLPCNFJob(BaseJob, YamlBaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     DATAMODULE_PREFIX: ClassVar[str] = 'datamodule'
@@ -251,7 +240,7 @@ class MoonsTimeEmbeddingMLPCNF(BaseJob, YamlBaseModel):
     metrics: dict[str, dict[str, float | int]
                   ] = DEFAULT_TRAINING_JOB_METRICS.copy()
 
-    def _run(self, tmp_dir: Path):
+    def _run(self, tmp_dir: Path, active_run: mlflow.entities.Run):
         logger = get_logger()
 
         self.model.to_mlflow(prefix=self.MODEL_PREFIX)
@@ -309,3 +298,19 @@ class MoonsTimeEmbeddingMLPCNF(BaseJob, YamlBaseModel):
         with metrics_json.open('w') as f:
             json.dump(self.metrics, f, indent=4)
         mlflow.log_artifact(str(metrics_json))
+
+    @classmethod
+    def from_mlflow(cls, mlflow_run: Run, prefix: str = '') -> Self:
+        if prefix:
+            prefix += "."
+        metrics = load_json(mlflow_run.info.run_id,
+                            cls.METRICS_ARTIFACT_PATH)
+        return cls(
+            model=TimeEmbeddingMLPCNF1DModel.from_mlflow(
+                mlflow_run,
+                prefix=f'{prefix}{cls.MODEL_PREFIX}'
+            ),
+            datamodule=MoonsDataset.from_mlflow(mlflow_run,
+                                                prefix=f'{prefix}{cls.DATAMODULE_PREFIX}'),
+            metrics=metrics,
+        )

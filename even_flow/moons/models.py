@@ -75,6 +75,7 @@ class TimeEmbeddingMLPNeuralODEClassifier(L.LightningModule, MLFlowLoggedClass):
                  rtol: RToleranceType = 1e-6,
                  learning_rate: float = 1e-3,):
         super().__init__()
+        self.save_hyperparameters(logger=False)
 
         self.input_dims = input_dims
         self.time_embed_dims = time_embed_dims

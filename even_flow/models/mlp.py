@@ -17,9 +17,11 @@ import torch
 import torch.nn as nn
 from pydantic import BaseModel, Field
 import mlflow
+
+from ..pydantic import MLFlowLoggedModel
 from ..torch import TORCH_MODULES
 from ..utils import interleave_columns
-from ..mlflow import MLFlowLoggedClass, load_json as mlflow_load_json
+from ..mlflow import load_json as mlflow_load_json
 
 
 # Type aliases for readability
@@ -181,7 +183,7 @@ class TimeEmbeddingMLP(nn.Module):
         self.nfe = 0
 
 
-class TimeEmbeddingMLPConfig(BaseModel, MLFlowLoggedClass):
+class TimeEmbeddingMLPConfig(BaseModel, MLFlowLoggedModel):
 
     JSON_ARTIFACT_PATH: ClassVar[str] = 'time_embedding_mlp_config.json'
 
@@ -212,7 +214,7 @@ class TimeEmbeddingMLPConfig(BaseModel, MLFlowLoggedClass):
         instance = cls(**config_dict)
         return instance
 
-    def to_mlflow(self, prefix=''):
+    def _to_mlflow(self, prefix=''):
         if prefix:
             prefix += prefix.replace('.', '_') + '_'
         json_str = self.model_dump_json(indent=4)
@@ -220,4 +222,4 @@ class TimeEmbeddingMLPConfig(BaseModel, MLFlowLoggedClass):
         with TemporaryDirectory() as tmp_dir:
             filepath = Path(tmp_dir) / filename
             filepath.write_text(json_str)
-        mlflow.log_artifact(str(filepath))
+            mlflow.log_artifact(str(filepath))

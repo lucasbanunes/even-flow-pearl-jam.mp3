@@ -1,0 +1,18 @@
+datamodule:
+  batch_size: 32
+model:
+  vector_field:
+    input_dims: 2
+    time_embed_dims: 3
+    time_embed_freq: 10
+    neurons_per_layer:
+      - 13
+      - 13
+      - 2
+    activations:
+      - tanh
+      - tanh
+      - tanh
+  monitor: val_loss
+  mode: min
+  max_epochs: 3

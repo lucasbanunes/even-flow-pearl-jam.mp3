@@ -4,14 +4,14 @@ import typer
 
 from .jobs import (
     MoonsTimeEmbeddinngMLPNeuralODEJob,
-    MoonsTimeEmbeddingMLPCNF
+    MoonsTimeEmbeddingMLPCNFJob
 )
 
 app = typer.Typer(
     help="Jobs for fitting a classifier on the Moons dataset."
 )
 
-type ConfigType = Annotated[
+ConfigType = Annotated[
     Path,
     typer.Option('--config',
                  help="Path to the yaml configuration file for the job.")
@@ -32,8 +32,8 @@ def time_embedding_mlp_neural_ode(
 @app.command()
 def time_embedding_mlp_cnf(
     config: ConfigType
-) -> MoonsTimeEmbeddingMLPCNF:
+) -> MoonsTimeEmbeddingMLPCNFJob:
     """Run a Moons Time Embedding MLP CNF training job."""
-    job = MoonsTimeEmbeddingMLPCNF.from_yaml(config)
+    job = MoonsTimeEmbeddingMLPCNFJob.from_yaml(config)
     job.run()
     return job
