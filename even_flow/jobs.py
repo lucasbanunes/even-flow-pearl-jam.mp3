@@ -7,14 +7,18 @@ from pydantic import BaseModel, Field
 import mlflow
 from typer import Option
 
-from .mlflow import MLFlowLoggedClass
-
 DEFAULT_TRAINING_JOB_METRICS = {
     'train': {},
     'val': {},
     'test': {},
     'predict': {}
 }
+
+type ConfigOption = Annotated[
+    Path,
+    Option('--config',
+           help="Path to the yaml configuration file for the job.")
+]
 
 ID_TYPE_HELP = "Unique identifier for the job"
 type IdType = Annotated[
@@ -34,14 +38,8 @@ type NameType = Annotated[
     ),
 ]
 
-type ConfigOption = Annotated[
-    Path,
-    Option('--config',
-           help="Path to the yaml configuration file for the job.")
-]
 
-
-class MLFlowBaseModel(BaseModel, MLFlowLoggedClass):
+class BaseJob(BaseModel):
     """BaseModel with MLflow logging capabilities."""
 
     # MLFLOW_LOGGER_ATTRIBUTES: ClassVar[list[str] | None] = None

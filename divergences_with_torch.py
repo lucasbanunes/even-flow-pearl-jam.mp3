@@ -27,8 +27,11 @@ print(f'Vector field value:\n{vetor_field_value}')
 torch_vector_field_jacobian = vmap(jacrev(vector_field))
 # explicit_jacobian = vector_field_jacobian(x)
 torch_jacobian = torch_vector_field_jacobian(x)
+torch_jacobian_div = torch.diagonal(torch_jacobian, dim1=1, dim2=2).sum(-1)
+
 # print(f'Explicit Jacobian:\n{explicit_jacobian}')
 print(f'Torch Jacobian:\n{torch_jacobian}')
+print(f'Torch Jacobian divergence:\n{torch_jacobian_div}')
 # jacobians_equal = torch.allclose(explicit_jacobian, torch_jacobian)
 # print(f'Jacobians equal: {jacobians_equal}')
 

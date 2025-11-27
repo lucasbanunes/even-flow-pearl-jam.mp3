@@ -75,7 +75,6 @@ class TimeEmbeddingMLPNeuralODEClassifier(L.LightningModule, MLFlowLoggedClass):
                  rtol: RToleranceType = 1e-6,
                  learning_rate: float = 1e-3,):
         super().__init__()
-        self.save_hyperparameters()
 
         self.input_dims = input_dims
         self.time_embed_dims = time_embed_dims
@@ -124,7 +123,7 @@ class TimeEmbeddingMLPNeuralODEClassifier(L.LightningModule, MLFlowLoggedClass):
         self.train_metrics.reset()
         self.val_metrics.reset()
         self.test_metrics.reset()
-        self.vector_field.reset_nfe()
+        self.vector_field.reset_metrics()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         xt = self.odeint(self.vector_field, x,

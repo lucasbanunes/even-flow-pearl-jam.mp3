@@ -4,7 +4,7 @@ import typer
 
 from .jobs import (
     MoonsTimeEmbeddinngMLPNeuralODEJob,
-    MoonsCNF
+    MoonsTimeEmbeddingMLPCNF
 )
 
 app = typer.Typer(
@@ -30,8 +30,10 @@ def time_embedding_mlp_neural_ode(
 
 
 @app.command()
-def cnf(
+def time_embedding_mlp_cnf(
     config: ConfigType
-) -> MoonsCNF:
-    """Run a Moons CNF training job."""
-    raise NotImplementedError("Moons CNF job is not yet implemented.")
+) -> MoonsTimeEmbeddingMLPCNF:
+    """Run a Moons Time Embedding MLP CNF training job."""
+    job = MoonsTimeEmbeddingMLPCNF.from_yaml(config)
+    job.run()
+    return job

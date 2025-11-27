@@ -10,12 +10,16 @@ This module focuses on a compact, configuration-driven builder used by the
 vector-field and model setup code.
 """
 
-from typing import Annotated, Any, Self
+from tempfile import TemporaryDirectory
+from typing import Annotated, Any, ClassVar, Self
+from pathlib import Path
 import torch
 import torch.nn as nn
-from pydantic import Field
+from pydantic import BaseModel, Field
+import mlflow
 from ..torch import TORCH_MODULES
 from ..utils import interleave_columns
+from ..mlflow import MLFlowLoggedClass, load_json as mlflow_load_json
 
 
 # Type aliases for readability
@@ -95,12 +99,34 @@ def build_mlp(
     return model
 
 
+type InputDimsType = Annotated[
+    int,
+    Field(
+        description="Dimensionality of the input data."
+    )
+]
+
+type TimeEmbedDimsType = Annotated[
+    int,
+    Field(
+        description="Dimensionality of the time embedding."
+    )
+]
+
+type TimeEmbedFreqType = Annotated[
+    float,
+    Field(
+        description="Base frequency for the time embedding."
+    )
+]
+
+
 class TimeEmbeddingMLP(nn.Module):
 
     def __init__(self,
-                 input_dims: int,
-                 time_embed_dims: int,
-                 time_embed_freq: float,
+                 input_dims: InputDimsType,
+                 time_embed_dims: TimeEmbedDimsType,
+                 time_embed_freq: TimeEmbedFreqType,
                  neurons_per_layer: DimsType,
                  activations: ActivationsType):
         super().__init__()
@@ -151,5 +177,47 @@ class TimeEmbeddingMLP(nn.Module):
             "activations": v.activations,
         }
 
-    def reset_nfe(self) -> None:
+    def reset_metrics(self) -> None:
         self.nfe = 0
+
+
+class TimeEmbeddingMLPConfig(BaseModel, MLFlowLoggedClass):
+
+    JSON_ARTIFACT_PATH: ClassVar[str] = 'time_embedding_mlp_config.json'
+
+    input_dims: InputDimsType
+    time_embed_dims: TimeEmbedDimsType
+    time_embed_freq: TimeEmbedFreqType
+    neurons_per_layer: DimsType
+    activations: ActivationsType
+
+    def as_nn_module(self) -> TimeEmbeddingMLP:
+        return TimeEmbeddingMLP(
+            input_dims=self.input_dims,
+            time_embed_dims=self.time_embed_dims,
+            time_embed_freq=self.time_embed_freq,
+            neurons_per_layer=self.neurons_per_layer,
+            activations=self.activations
+        )
+
+    @classmethod
+    def from_mlflow(cls, mlflow_run, prefix=''):
+        if prefix:
+            prefix += prefix.replace('.', '_') + '_'
+        artifact_name = f'{prefix}{cls.JSON_ARTIFACT_PATH}'
+        config_dict = mlflow_load_json(
+            run_id=mlflow_run.info.run_id,
+            artifact_path=artifact_name
+        )
+        instance = cls(**config_dict)
+        return instance
+
+    def to_mlflow(self, prefix=''):
+        if prefix:
+            prefix += prefix.replace('.', '_') + '_'
+        json_str = self.model_dump_json(indent=4)
+        filename = f'{prefix}{self.JSON_ARTIFACT_PATH}'
+        with TemporaryDirectory() as tmp_dir:
+            filepath = Path(tmp_dir) / filename
+            filepath.write_text(json_str)
+        mlflow.log_artifact(str(filepath))

@@ -102,7 +102,7 @@ class DatabaseConfig(BaseModel):
 # 3. Your Main Model (Modified to include the submodel for demo)
 
 
-class MLFlowBaseModel(BaseModel, ABC):
+class BaseJob(BaseModel, ABC):
     """BaseModel with MLflow logging capabilities."""
     id_: IdType = None
     name: NameType = None
@@ -111,5 +111,5 @@ class MLFlowBaseModel(BaseModel, ABC):
 
 
 # --- Run ---
-yaml_docs = get_model_yaml(MLFlowBaseModel)
+yaml_docs = get_model_yaml(BaseJob)
 print(yaml_docs)

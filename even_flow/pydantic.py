@@ -1,7 +1,11 @@
+from abc import ABC, abstractmethod
+from typing import Annotated
 from pathlib import Path
 from typing import Self
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ConfigDict
+from typer import Option
 import yaml
+import mlflow
 
 
 class YamlBaseModel(BaseModel):
@@ -16,6 +20,69 @@ class YamlBaseModel(BaseModel):
             data = yaml.safe_load(f)
 
         return cls(**data)
+
+
+ID_TYPE_HELP = "Unique identifier for the job"
+type IdType = Annotated[
+    str | None,
+    Field(
+        description=ID_TYPE_HELP
+    ),
+    Option('--id', help=ID_TYPE_HELP)
+]
+
+
+NAME_TYPE_HELP = "Name of the job"
+type NameType = Annotated[
+    str,
+    Field(
+        description=NAME_TYPE_HELP
+    ),
+]
+
+type RunType = Annotated[
+    mlflow.entities.Run | None,
+    Field(
+        description="MLflow Run associated with the class."
+    )
+]
+
+
+class MLFlowLoggedModel(BaseModel, ABC):
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    id_: IdType = None
+    name: NameType = None
+    run: RunType = None
+
+    @abstractmethod
+    def _to_mlflow(self, prefix: str = '') -> None:
+        raise NotImplementedError(
+            "to_mlflow method must be implemented by subclasses.")
+
+    def to_mlflow(self, prefix: str = '') -> None:
+        self._to_mlflow(prefix)
+        self.id_ = mlflow.active_run().info.run_id
+        self.name = mlflow.active_run().data.tags.get('mlflow.runName', None)
+        self.run = mlflow.active_run()
+
+    @classmethod
+    @abstractmethod
+    def from_mlflow(cls, mlflow_run: mlflow.entities.Run,
+                    prefix: str = '') -> Self:
+        raise NotImplementedError(
+            "from_mlflow method must be implemented by subclasses.")
+
+    @classmethod
+    def from_mlflow_run_id(cls, run_id: str, prefix: str = '') -> Self:
+        mlflow_client = mlflow.MlflowClient()
+        mlflow_run = mlflow_client.get_run(run_id)
+        instance = cls.from_mlflow(mlflow_run, prefix=prefix)
+        instance.id_ = run_id
+        instance.name = mlflow_run.data.tags.get('mlflow.runName', None)
+        instance.run = mlflow_run
+        return instance
 
 
 def format_type(annotation):

@@ -15,7 +15,7 @@ from even_flow.utils import get_logger
 
 from ..models.mlp import TimeEmbeddingMLP
 from ..pydantic import YamlBaseModel
-from ..jobs import MLFlowBaseModel
+from ..jobs import BaseJob
 from .dataset import SpiralsDataModule
 
 
@@ -32,7 +32,7 @@ app = typer.Typer(
 )
 
 
-class MLPSpiralFit(MLFlowBaseModel, YamlBaseModel):
+class MLPSpiralFit(BaseJob, YamlBaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -125,7 +125,7 @@ class MLPSpiralFit(MLFlowBaseModel, YamlBaseModel):
 #     return job
 
 
-class MLP(MLFlowBaseModel, YamlBaseModel):
+class MLP(BaseJob, YamlBaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
