@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field, ConfigDict
 import mlflow
 from typer import Option
 
+from .utils import get_logger
+
 DEFAULT_TRAINING_JOB_METRICS = {
     'train': {},
     'val': {},
@@ -62,6 +64,8 @@ class BaseJob(BaseModel, ABC):
             "_run method must be implemented by subclasses.")
 
     def run(self):
+        logger = get_logger()
+        logger.debug('Started run...')
         if self.id_ is not None:
             raise ValueError("Cannot run a job with a predefined id_.")
         with (mlflow.start_run(run_name=self.name) as active_run,
@@ -74,7 +78,7 @@ class BaseJob(BaseModel, ABC):
             end_start = datetime.now(timezone.utc).timestamp()
             mlflow.log_metric('exec_end', end_start)
             mlflow.log_metric("exec_duration", end_start - exec_start)
-
+        logger.debug('Finished run.')
         return self.id_
 
     @classmethod

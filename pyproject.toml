@@ -31,7 +31,10 @@ dev = [
 minversion = "6.0"
 addopts = "-ra -vv"
 log_cli = true
-log_cli_level = "INFO"
+log_cli_level = "DEBUG"
 log_cli_format = "%(asctime)s | %(levelname)s | %(name)s | %(module)s | %(funcName)s | %(lineno)s | %(message)s"
 log_date_format = "%Y-%m-%d %H:%M:%S"
 pythonpath = "."
+env = [
+    "MLFLOW_DISABLE_TELEMETRY=true"
+]

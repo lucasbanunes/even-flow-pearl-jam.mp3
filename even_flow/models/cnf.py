@@ -14,7 +14,9 @@ import json
 from lightning.pytorch.loggers import MLFlowLogger
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
+from lightning.pytorch.profilers import AdvancedProfiler, SimpleProfiler
 from mlflow.models.model import ModelInfo
+
 
 from .mlp import TimeEmbeddingMLPConfig
 from ..mlflow import tmp_artifact_download, MLFlowLoggedClass
@@ -113,14 +115,6 @@ class CNF(L.LightningModule):
         self.solver = model_config.solver
         self.atol = model_config.atol
         self.rtol = model_config.rtol
-
-        self.divergence_strategy = model_config.divergence_strategy
-        if self.divergence_strategy == 'exact':
-            self.augmented_function = self.exact_divergence
-        else:
-            raise ValueError(
-                f"Unsupported divergence strategy: {self.divergence_strategy}")
-
         self.learning_rate = model_config.learning_rate
 
         self.train_metrics = MetricCollection({
@@ -167,9 +161,9 @@ class CNF(L.LightningModule):
         )
         return z[-1], int_div[-1]
 
-    def exact_divergence(self,
-                         t: torch.Tensor,
-                         state: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
+    def augmented_function(self,
+                           t: torch.Tensor,
+                           state: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         z, _ = state
         with torch.enable_grad():
             z = z.clone().requires_grad_(True)
@@ -192,7 +186,7 @@ class CNF(L.LightningModule):
         # z_eval = z_eval.squeeze()
         # divergence = divergence.reshape(divergence.shape[0], 1)
 
-        return z, divergence
+        return z, divergence.reshape(-1, 1)
 
     def log_prob(self, z0: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         zf, div_int = self.forward(z0)
@@ -224,7 +218,6 @@ class CNF(L.LightningModule):
         # Reset metrics after each epoch
         self.train_metrics.reset()
 
-    @torch.enable_grad()
     def validation_step(self,
                         batch: tuple[torch.Tensor],
                         batch_idx: torch.Tensor):
@@ -239,7 +232,6 @@ class CNF(L.LightningModule):
         # Reset metrics after each epoch
         self.val_metrics.reset()
 
-    @torch.enable_grad()
     def test_step(self,
                   batch: tuple[torch.Tensor],
                   batch_idx: torch.Tensor):
@@ -258,10 +250,42 @@ class CNF(L.LightningModule):
         return optimizer
 
 
+class CNFHutchingson(CNF):
+
+    def __init__(self,
+                 model_config: 'CNFHutchingsonModel'):
+        super().__init__(model_config=model_config)
+        self.hutchingson_distribution = model_config.hutchingson_distribution
+        match self.hutchingson_distribution:
+            case 'standard_normal':
+                self.noise_distribution = torch.distributions.Normal(
+                    loc=0.0, scale=1.0)
+            case 'rademacher':
+                self.noise_distribution = torch.distributions.Bernoulli(
+                    probs=0.5)
+            case _:
+                raise ValueError(
+                    f"Unsupported Hutchingson distribution: {self.hutchingson_distribution}")
+
+    def augmented_function(self,
+                           t: torch.Tensor,
+                           state: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
+        z, _ = state
+        with torch.enable_grad():
+            z = z.clone().requires_grad_(True)
+            dzdt = self.vector_field.forward(t, z)
+            grad_outputs = self.noise_distribution.sample(z.shape)
+            (epsjp,) = torch.autograd.grad(
+                dzdt, z, grad_outputs=grad_outputs, create_graph=True)
+            divergence = (epsjp * grad_outputs).sum(dim=-1)
+
+        return z, divergence.reshape(-1, 1)
+
 
 class CNFModel(MLFlowLoggedModel):
 
     LIGHTNING_MODULE_ARTIFACT_PATH: ClassVar[str] = 'CNF.ckpt'
+    LIGHTNING_MODULE_TYPE: ClassVar[Type[CNF]] = CNF
 
     vector_field: VectorFieldType
     adjoint: AdjointType = True
@@ -270,7 +294,6 @@ class CNFModel(MLFlowLoggedModel):
     solver: SolverType = 'dopri5'
     atol: AtolType = 1e-5
     rtol: RtolType = 1e-5
-    divergence_strategy: DivergenceStrategyType = 'exact'
     learning_rate: LearningRateType = 1e-3
     accelerator: TrainerAcceleratorType = 'cpu'
     checkpoints_dir: CheckpointsDirType = None
@@ -292,7 +315,8 @@ class CNFModel(MLFlowLoggedModel):
 
     def model_post_init(self, context):
         if self._lightning_module is None:
-            self._lightning_module = CNF(model_config=self)
+            self._lightning_module = self.LIGHTNING_MODULE_TYPE(
+                model_config=self)
 
     def _to_mlflow(self, prefix=''):
         if prefix:
@@ -308,8 +332,6 @@ class CNFModel(MLFlowLoggedModel):
         mlflow.log_param(f'{prefix}solver', self.solver)
         mlflow.log_param(f'{prefix}atol', self.atol)
         mlflow.log_param(f'{prefix}rtol', self.rtol)
-        mlflow.log_param(f'{prefix}divergence_strategy',
-                         self.divergence_strategy)
         mlflow.log_param(f'{prefix}learning_rate', self.learning_rate)
         mlflow.log_param(f'{prefix}accelerator', self.accelerator)
         mlflow.log_param(f'{prefix}checkpoints_dir', str(self.checkpoints_dir))
@@ -322,11 +344,10 @@ class CNFModel(MLFlowLoggedModel):
                          self.num_sanity_val_steps)
 
     @classmethod
-    def from_mlflow(cls, mlflow_run, prefix='') -> dict[str, Any]:
+    def from_mlflow(cls, mlflow_run, prefix='', kwargs: dict = {}) -> dict[str, Any]:
         formated_prefix = prefix
         if prefix:
             formated_prefix += '.'
-        kwargs = {}
         kwargs['adjoint'] = bool(mlflow_run.data.params.get(f'{formated_prefix}adjoint',
                                                             cls.model_fields['adjoint'].default))
         kwargs['base_distribution'] = mlflow_run.data.params.get(f'{prefix}base_distribution',
@@ -342,8 +363,6 @@ class CNFModel(MLFlowLoggedModel):
                                                           cls.model_fields['atol'].default))
         kwargs['rtol'] = float(mlflow_run.data.params.get(f'{formated_prefix}rtol',
                                                           cls.model_fields['rtol'].default))
-        kwargs['divergence_strategy'] = mlflow_run.data.params.get(f'{formated_prefix}divergence_strategy',
-                                                                   cls.model_fields['divergence_strategy'].default)
         kwargs['learning_rate'] = float(mlflow_run.data.params.get(f'{formated_prefix}learning_rate',
                                                                    cls.model_fields['learning_rate'].default))
         kwargs['accelerator'] = mlflow_run.data.params.get(f'{formated_prefix}accelerator',
@@ -375,7 +394,8 @@ class CNFModel(MLFlowLoggedModel):
             run_id=mlflow_run.info.run_id,
             artifact_path=instance.get_lightning_module_artifact_name(prefix)
         ) as ckpt_path:
-            instance._lightning_module = CNF.load_from_checkpoint(ckpt_path)
+            instance._lightning_module = cls.LIGHTNING_MODULE_TYPE.load_from_checkpoint(
+                ckpt_path)
         return instance
 
     def get_mlflow_logger(self) -> MLFlowLogger:
@@ -429,6 +449,13 @@ class CNFModel(MLFlowLoggedModel):
                 ),
                 checkpoint,
             ]
+            profiler_filename = "profiler-results"
+            fit_profiler_filename = f'fit-{profiler_filename}.txt'
+            profiler_dir = tmp_dir
+            profiler = SimpleProfiler(
+                dirpath=str(profiler_dir),
+                filename=profiler_filename
+            )
             trainer = L.Trainer(
                 max_epochs=self.max_epochs,
                 accelerator=self.accelerator,
@@ -437,7 +464,8 @@ class CNFModel(MLFlowLoggedModel):
                 callbacks=callbacks,
                 enable_progress_bar=self.verbose,
                 enable_model_summary=self.verbose,
-                num_sanity_val_steps=self.num_sanity_val_steps
+                num_sanity_val_steps=self.num_sanity_val_steps,
+                profiler=profiler
             )
 
             logger.debug('Starting training process...')
@@ -449,7 +477,8 @@ class CNFModel(MLFlowLoggedModel):
             mlflow.log_metric(
                 "fit_duration", (fit_end - fit_start).total_seconds())
             logger.debug('Logging model artifacts to MLflow...')
-            self._lightning_module = CNF.load_from_checkpoint(
+            mlflow.log_artifact(str(profiler_dir / fit_profiler_filename))
+            self._lightning_module = self.LIGHTNING_MODULE_TYPE.load_from_checkpoint(
                 checkpoint.best_model_path)
             checkpoint_temp_path = Path(
                 tmp_dir) / self.get_lightning_module_artifact_name(prefix)
@@ -475,4 +504,38 @@ class CNFModel(MLFlowLoggedModel):
 
 
 class TimeEmbeddingMLPCNFModel(CNFModel):
+    vector_field: TimeEmbeddingMLPConfig
+
+
+type HutchingsonDistributionType = Annotated[
+    Literal['standard_normal', 'rademacher'],
+    Field(
+        description="The distribution used for Hutchingson estimator."
+    )
+]
+
+
+class CNFHutchingsonModel(CNFModel):
+    LIGHTNING_MODULE_TYPE: ClassVar[Type[CNF]] = CNFHutchingson
+    hutchingson_distribution: HutchingsonDistributionType = 'standard_normal'
+
+    def _to_mlflow(self, prefix=''):
+        formated_prefix = prefix
+        if prefix:
+            formated_prefix += '.'
+        super()._to_mlflow(prefix)
+        mlflow.log_param(
+            f'{formated_prefix}hutchingson_distribution', self.hutchingson_distribution)
+
+    @classmethod
+    def from_mlflow(cls, mlflow_run, prefix='', kwargs={}):
+        formated_prefix = prefix
+        if prefix:
+            formated_prefix += '.'
+        kwargs['hutchingson_distribution'] = mlflow_run.data.params.get(f'{formated_prefix}hutchingson_distribution',
+                                                                        cls.model_fields['hutchingson_distribution'].default)
+        return super().from_mlflow(mlflow_run, prefix, kwargs)
+
+
+class TimeEmbeddingMLPCNFHutchingsonModel(CNFHutchingsonModel):
     vector_field: TimeEmbeddingMLPConfig

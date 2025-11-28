@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Annotated, Self, ClassVar
+from typing import Annotated, Self, ClassVar, Type
 import shutil
 from datetime import datetime, timezone
 import mlflow.entities
@@ -23,7 +23,11 @@ from ..jobs import BaseJob, DEFAULT_TRAINING_JOB_METRICS
 from ..utils import get_logger
 from ..pydantic import YamlBaseModel
 from ..mlflow import load_json
-from ..models.cnf import TimeEmbeddingMLPCNFModel
+from ..models.cnf import (
+    CNFModel,
+    TimeEmbeddingMLPCNFModel,
+    TimeEmbeddingMLPCNFHutchingsonModel
+)
 
 
 class MoonsTimeEmbeddinngMLPNeuralODEJob(BaseJob, YamlBaseModel):
@@ -141,7 +145,7 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(BaseJob, YamlBaseModel):
             devices=1,
             logger=lightning_mlflow_logger,
             callbacks=callbacks,
-            enable_progress_bar=False,
+            enable_progress_bar=True,
         )
         logger.info('Starting training process...')
         fit_start = datetime.now(timezone.utc)
@@ -249,7 +253,8 @@ class MoonsTimeEmbeddingMLPCNFJob(BaseJob, YamlBaseModel):
         logger.info('Fitting model...')
         fit_start = datetime.now(timezone.utc)
         mlflow.log_metric('fit_start', fit_start.timestamp())
-        _, model_info = self.model.fit(self.datamodule, prefix=self.MODEL_PREFIX)
+        _, model_info = self.model.fit(
+            self.datamodule, prefix=self.MODEL_PREFIX)
         fit_end = datetime.now(timezone.utc)
         mlflow.log_metric('fit_end', fit_end.timestamp())
         mlflow.log_metric(
@@ -317,8 +322,9 @@ class MoonsTimeEmbeddingMLPCNFJob(BaseJob, YamlBaseModel):
             prefix += "."
         metrics = load_json(mlflow_run.info.run_id,
                             cls.METRICS_ARTIFACT_PATH)
+        model_type: Type[CNFModel] = cls.model_fields['model'].annotation
         return cls(
-            model=TimeEmbeddingMLPCNFModel.from_mlflow(
+            model=model_type.from_mlflow(
                 mlflow_run,
                 prefix=f'{prefix}{cls.MODEL_PREFIX}'
             ),
@@ -326,3 +332,8 @@ class MoonsTimeEmbeddingMLPCNFJob(BaseJob, YamlBaseModel):
                                                 prefix=f'{prefix}{cls.DATAMODULE_PREFIX}'),
             metrics=metrics,
         )
+
+
+class MoonsTimeEmbeddingMLPCNFHutchingsonJob(MoonsTimeEmbeddingMLPCNFJob):
+
+    model: TimeEmbeddingMLPCNFHutchingsonModel

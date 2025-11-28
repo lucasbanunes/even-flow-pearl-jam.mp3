@@ -17,7 +17,7 @@ print(f'Vector field value:\n{vector_field_value}')
 
 def vector_field_divergence(t, x):
     div = 3*x[:, 0]**2 + 2*x[:, 1]
-    return div
+    return div``
 
 
 def compute_exact_divergence(t, x):
