@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pydantic import Field, PrivateAttr
 import torch
 from torch import nn
-from torchdiffeq import odeint_adjoint
+from torchdiffeq import odeint, odeint_adjoint
 from torchmetrics import MeanMetric, MetricCollection
 import mlflow
 import lightning as L
@@ -18,7 +18,6 @@ from mlflow.models.model import ModelInfo
 
 from .mlp import TimeEmbeddingMLPConfig
 from ..mlflow import tmp_artifact_download, MLFlowLoggedClass
-from ..torch import memory_optimized_divergence1d
 from ..lightning import (
     CheckpointsDirType,
     MaxEpochsType,
@@ -35,7 +34,7 @@ type AdjointType = Annotated[
     Field(True, description="Whether to use the adjoint method for backpropagation")
 ]
 type DivergenceStrategyType = Annotated[
-    Literal['memory_optimized', 'speed_optimized'],
+    Literal['exact', ],
     Field(
         description="Strategy for computing the divergence."
     )
@@ -80,10 +79,10 @@ type VectorFieldType = Annotated[
 ]
 
 
-class CNF1D(L.LightningModule):
+class CNF(L.LightningModule):
 
     def __init__(self,
-                 model_config: 'CNF1DModel'):
+                 model_config: 'CNFModel'):
         super().__init__()
         self.save_hyperparameters(logger=False)
 
@@ -116,8 +115,8 @@ class CNF1D(L.LightningModule):
         self.rtol = model_config.rtol
 
         self.divergence_strategy = model_config.divergence_strategy
-        if self.divergence_strategy == 'memory_optimized':
-            self.divergence_strategy = memory_optimized_divergence1d
+        if self.divergence_strategy == 'exact':
+            self.augmented_function = self.exact_divergence
         else:
             raise ValueError(
                 f"Unsupported divergence strategy: {self.divergence_strategy}")
@@ -144,26 +143,8 @@ class CNF1D(L.LightningModule):
     def forward(self, z0: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         div0 = torch.zeros(z0.shape[0], 1, dtype=z0.dtype)
 
-        def augmented_function(t: torch.Tensor,
-                               state: tuple[torch.Tensor, torch.Tensor]
-                               ) -> tuple[torch.Tensor, torch.Tensor]:
-            z, _ = state
-            with torch.enable_grad():
-                z = z.clone().requires_grad_(True)
-                t = t.clone().requires_grad_(True)
-                dzdt = self.vector_field.forward(t, z)
-                grad_outputs = torch.eye(z.shape[-1], dtype=z.dtype, device=z.device)
-                grad_outputs = grad_outputs.expand(*z.shape, -1).movedim(-1, 0)
-                (jacobian,) = torch.autograd.grad(
-                    dzdt, z,
-                    grad_outputs=grad_outputs,
-                    create_graph=True, is_grads_batched=True
-                )
-                divergence = torch.einsum("i...i", jacobian)
-            return z, divergence
-
         z, int_div = odeint_adjoint(
-            augmented_function,
+            self.augmented_function,
             (z0, div0),
             self.integration_times.type_as(z0),
             method=self.solver,
@@ -173,14 +154,28 @@ class CNF1D(L.LightningModule):
         )
         return z[-1], int_div[-1]
 
-    def augmented_function(self,
-                           t: torch.Tensor,
-                           state: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward_no_adjoint(self, z0: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        div0 = torch.zeros(z0.shape[0], 1, dtype=z0.dtype)
+
+        z, int_div = odeint(
+            self.augmented_function,
+            (z0, div0),
+            self.integration_times.type_as(z0),
+            method=self.solver,
+            atol=self.atol,
+            rtol=self.rtol
+        )
+        return z[-1], int_div[-1]
+
+    def exact_divergence(self,
+                         t: torch.Tensor,
+                         state: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         z, _ = state
         with torch.enable_grad():
             z = z.clone().requires_grad_(True)
             dzdt = self.vector_field.forward(t, z)
-            grad_outputs = torch.eye(z.shape[-1], dtype=z.dtype, device=z.device)
+            grad_outputs = torch.eye(
+                z.shape[-1], dtype=z.dtype, device=z.device)
             grad_outputs = grad_outputs.expand(*z.shape, -1).movedim(-1, 0)
             (jacobian,) = torch.autograd.grad(
                 dzdt, z,
@@ -207,7 +202,7 @@ class CNF1D(L.LightningModule):
     def sample(self, num_samples: int) -> torch.Tensor:
         zf = self.base_distribution.sample((num_samples,))
         integration_times_reversed = torch.flip(self.integration_times, [0])
-        z, _ = odeint_adjoint(
+        z, _ = odeint(
             self.vector_field,
             zf,
             integration_times_reversed.type_as(zf),
@@ -263,9 +258,10 @@ class CNF1D(L.LightningModule):
         return optimizer
 
 
-class CNF1DModel(MLFlowLoggedModel):
 
-    LIGHTNING_MODULE_ARTIFACT_PATH: ClassVar[str] = 'cnf1d.ckpt'
+class CNFModel(MLFlowLoggedModel):
+
+    LIGHTNING_MODULE_ARTIFACT_PATH: ClassVar[str] = 'CNF.ckpt'
 
     vector_field: VectorFieldType
     adjoint: AdjointType = True
@@ -274,7 +270,7 @@ class CNF1DModel(MLFlowLoggedModel):
     solver: SolverType = 'dopri5'
     atol: AtolType = 1e-5
     rtol: RtolType = 1e-5
-    divergence_strategy: DivergenceStrategyType = 'memory_optimized'
+    divergence_strategy: DivergenceStrategyType = 'exact'
     learning_rate: LearningRateType = 1e-3
     accelerator: TrainerAcceleratorType = 'cpu'
     checkpoints_dir: CheckpointsDirType = None
@@ -286,17 +282,17 @@ class CNF1DModel(MLFlowLoggedModel):
     num_sanity_val_steps: int = 5
 
     _lightning_module: Annotated[
-        CNF1D | None,
+        CNF | None,
         PrivateAttr()
     ] = None
 
     @property
-    def lightning_module(self) -> CNF1D:
+    def lightning_module(self) -> CNF:
         return self._lightning_module
 
     def model_post_init(self, context):
         if self._lightning_module is None:
-            self._lightning_module = CNF1D(model_config=self)
+            self._lightning_module = CNF(model_config=self)
 
     def _to_mlflow(self, prefix=''):
         if prefix:
@@ -379,13 +375,14 @@ class CNF1DModel(MLFlowLoggedModel):
             run_id=mlflow_run.info.run_id,
             artifact_path=instance.get_lightning_module_artifact_name(prefix)
         ) as ckpt_path:
-            instance._lightning_module = CNF1D.load_from_checkpoint(ckpt_path)
+            instance._lightning_module = CNF.load_from_checkpoint(ckpt_path)
         return instance
 
     def get_mlflow_logger(self) -> MLFlowLogger:
         mlflow_client = mlflow.MlflowClient()
         active_run = mlflow.active_run()
-        experiment = mlflow_client.get_experiment(active_run.info.experiment_id)
+        experiment = mlflow_client.get_experiment(
+            active_run.info.experiment_id)
         lightning_mlflow_logger = MLFlowLogger(
             run_name=active_run.data.tags['mlflow.runName'],
             run_id=active_run.info.run_id,
@@ -452,7 +449,7 @@ class CNF1DModel(MLFlowLoggedModel):
             mlflow.log_metric(
                 "fit_duration", (fit_end - fit_start).total_seconds())
             logger.debug('Logging model artifacts to MLflow...')
-            self._lightning_module = CNF1D.load_from_checkpoint(
+            self._lightning_module = CNF.load_from_checkpoint(
                 checkpoint.best_model_path)
             checkpoint_temp_path = Path(
                 tmp_dir) / self.get_lightning_module_artifact_name(prefix)
@@ -477,5 +474,5 @@ class CNF1DModel(MLFlowLoggedModel):
         return metrics
 
 
-class TimeEmbeddingMLPCNF1DModel(CNF1DModel):
+class TimeEmbeddingMLPCNFModel(CNFModel):
     vector_field: TimeEmbeddingMLPConfig

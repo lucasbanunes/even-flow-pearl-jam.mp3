@@ -23,7 +23,7 @@ from ..jobs import BaseJob, DEFAULT_TRAINING_JOB_METRICS
 from ..utils import get_logger
 from ..pydantic import YamlBaseModel
 from ..mlflow import load_json
-from ..models.cnf import TimeEmbeddingMLPCNF1DModel
+from ..models.cnf import TimeEmbeddingMLPCNFModel
 
 
 class MoonsTimeEmbeddinngMLPNeuralODEJob(BaseJob, YamlBaseModel):
@@ -232,7 +232,7 @@ class MoonsTimeEmbeddingMLPCNFJob(BaseJob, YamlBaseModel):
     METRICS_ARTIFACT_PATH: ClassVar[str] = 'metrics.json'
     MODEL_PREFIX: ClassVar[str] = 'model'
 
-    model: TimeEmbeddingMLPCNF1DModel
+    model: TimeEmbeddingMLPCNFModel
     datamodule: Annotated[
         MoonsDataset,
         BeforeValidator(MoonsDataset.pydantic_before_validator),
@@ -318,7 +318,7 @@ class MoonsTimeEmbeddingMLPCNFJob(BaseJob, YamlBaseModel):
         metrics = load_json(mlflow_run.info.run_id,
                             cls.METRICS_ARTIFACT_PATH)
         return cls(
-            model=TimeEmbeddingMLPCNF1DModel.from_mlflow(
+            model=TimeEmbeddingMLPCNFModel.from_mlflow(
                 mlflow_run,
                 prefix=f'{prefix}{cls.MODEL_PREFIX}'
             ),
