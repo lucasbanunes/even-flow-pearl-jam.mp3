@@ -13,68 +13,60 @@ type RandomState = int | None
 type InitialStateLowType = Annotated[
     int,
     Field(
-        default=0,
-        help="Lower bound for initial state generation."
+        description="Lower bound for initial state generation."
     )
 ]
 
 type InitialStateHighType = Annotated[
     int,
     Field(
-        default=1,
-        help="Upper bound for initial state generation."
+        description="Upper bound for initial state generation."
     )
 ]
 
 type NSeriesType = Annotated[
     int,
     Field(
-        default=100,
         gt=0,
-        help="Number of spiral series to generate."
+        description="Number of spiral series to generate."
     )
 ]
 
 type NTimestampsType = Annotated[
     int,
     Field(
-        default=1000,
         gt=0,
-        help="Number of time steps in each series."
+        description="Number of time steps in each series."
     )
 ]
 
 type TStepType = Annotated[
     float,
     Field(
-        default=0.1,
         gt=0.0,
-        help="Time step size for series generation."
+        description="Time step size for series generation."
     )
 ]
 
 type DecayType = Annotated[
     float,
     Field(
-        default=-0.1,
-        help="Exponential decay rate (should be negative for stable spirals)."
+        description="Exponential decay rate (should be negative for stable spirals)."
     )
 ]
 
 type FrequencyType = Annotated[
     float,
     Field(
-        default=1.0,
         gt=0.0,
-        help="Frequency for sinusoidal components."
+        description="Frequency for sinusoidal components."
     )
 ]
 
 type NoiseType = Annotated[
     tuple[float, float] | None,
     Field(
-        default=None,
-        help="Noise parameters as (mean, std) tuple, or None for no noise."
+        description="Noise parameters as (mean, std) tuple, or None for no noise."
     )
 ]
 
@@ -82,16 +74,15 @@ type SamplesType = Annotated[
     int,
     Field(
         gt=0,
-        help="Number of samples for dataset split."
+        description="Number of samples for dataset split."
     )
 ]
 
 type BatchSizeType = Annotated[
     int,
     Field(
-        default=32,
         gt=0,
-        help="Batch size for data loaders."
+        description="Batch size for data loaders."
     )
 ]
 

@@ -10,12 +10,13 @@ This module focuses on a compact, configuration-driven builder used by the
 vector-field and model setup code.
 """
 
+import json
 from tempfile import TemporaryDirectory
 from typing import Annotated, Any, ClassVar, Self
 from pathlib import Path
 import torch
 import torch.nn as nn
-from pydantic import BaseModel, Field
+from pydantic import Field
 import mlflow
 
 from ..pydantic import MLFlowLoggedModel
@@ -29,14 +30,14 @@ type DimsType = Annotated[
     list[int],
     Field(
         min_items=2,
-        help="List of layer dimensions; must have at least one entry."
+        description="List of layer dimensions; must have at least one entry."
     )
 ]
 type ActivationsType = Annotated[
     list[str | None],
     Field(
         min_items=1,
-        help="List of activation names length should be len(dims)-1."
+        description="List of activation names length should be len(dims)-1."
     )
 ]
 
@@ -183,7 +184,7 @@ class TimeEmbeddingMLP(nn.Module):
         self.nfe = 0
 
 
-class TimeEmbeddingMLPConfig(BaseModel, MLFlowLoggedModel):
+class TimeEmbeddingMLPConfig(MLFlowLoggedModel):
 
     JSON_ARTIFACT_PATH: ClassVar[str] = 'time_embedding_mlp_config.json'
 
@@ -205,7 +206,7 @@ class TimeEmbeddingMLPConfig(BaseModel, MLFlowLoggedModel):
     @classmethod
     def from_mlflow(cls, mlflow_run, prefix=''):
         if prefix:
-            prefix += prefix.replace('.', '_') + '_'
+            prefix = prefix.replace('.', '_') + '_'
         artifact_name = f'{prefix}{cls.JSON_ARTIFACT_PATH}'
         config_dict = mlflow_load_json(
             run_id=mlflow_run.info.run_id,
@@ -216,9 +217,16 @@ class TimeEmbeddingMLPConfig(BaseModel, MLFlowLoggedModel):
 
     def _to_mlflow(self, prefix=''):
         if prefix:
-            prefix += prefix.replace('.', '_') + '_'
-        json_str = self.model_dump_json(indent=4)
-        filename = f'{prefix}{self.JSON_ARTIFACT_PATH}'
+            file_prefix = prefix.replace('.', '_') + '_'
+            prefix += '.'
+        mlflow.log_param(f'{prefix}input_dims', self.input_dims)
+        mlflow.log_param(f'{prefix}time_embed_dims', self.time_embed_dims)
+        mlflow.log_param(f'{prefix}time_embed_freq', self.time_embed_freq)
+        mlflow.log_param(f'{prefix}neurons_per_layer', json.dumps(self.neurons_per_layer))
+        mlflow.log_param(f'{prefix}activations', json.dumps(self.activations))
+        json_str = self.model_dump_json(indent=4,
+                                        exclude=['id_', 'name'])
+        filename = file_prefix + self.JSON_ARTIFACT_PATH
         with TemporaryDirectory() as tmp_dir:
             filepath = Path(tmp_dir) / filename
             filepath.write_text(json_str)

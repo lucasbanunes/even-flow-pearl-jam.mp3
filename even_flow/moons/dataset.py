@@ -15,45 +15,40 @@ type RandomState = int | None
 type TrainSamplesType = Annotated[
     int,
     Field(
-        default=1000,
         gt=0,
-        help="Number of training samples to generate."
+        description="Number of training samples to generate."
     )
 ]
 
 type ValSamplesType = Annotated[
     int,
     Field(
-        default=200,
         gt=0,
-        help="Number of validation samples to generate."
+        description="Number of validation samples to generate."
     )
 ]
 
 type TestSamplesType = Annotated[
     int,
     Field(
-        default=200,
         gt=0,
-        help="Number of test samples to generate."
+        description="Number of test samples to generate."
     )
 ]
 
 type NoiseType = Annotated[
     float,
     Field(
-        default=0.1,
         ge=0.0,
-        help="Amount of homoscedastic noise to add to the data."
+        description="Amount of homoscedastic noise to add to the data."
     )
 ]
 
 type BatchSizeType = Annotated[
     int,
     Field(
-        default=32,
         gt=0,
-        help="Batch size for data loaders."
+        description="Batch size for data loaders."
     )
 ]
 

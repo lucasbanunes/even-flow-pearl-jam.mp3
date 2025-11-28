@@ -1,67 +1,53 @@
 import torch
-from torch.func import jacrev, jvp, vmap
 
-x = torch.Tensor([[1.0, 2.0], [1.0, 2.0]]).to(
+x = torch.Tensor([[1.0, 2.0], [3, 1.0]]).to(
     torch.float32)  # (batch_size, dim)
+t = torch.zeros(x.shape[0], dtype=x.dtype)  # (batch_size,)
 print(f'x:\n{x}')
 
 
-def vector_field(x):
+def vector_field(t, x):
     # Example: y[0] = x[0]^3, y[1] = x[1]^2
-    return torch.stack([x[0]**3, x[1]**2])
+    return torch.stack([x[:, 0]**3, x[:, 1]**2], dim=-1)
 
 
-vector_field_vectorized = vmap(vector_field)
-vetor_field_value = vector_field_vectorized(x)
-print(f'Vector field value:\n{vetor_field_value}')
+vector_field_value = vector_field(t, x)
+print(f'Vector field value:\n{vector_field_value}')
 
 
-# def vector_field_jacobian(x):
-#     return torch.Tensor([
-#         [3*x[0]**2, 0],
-#         [0, 2*x[1]]
-#     ])
-
-
-# vector_field_jacobian = vmap(vector_field_jacobian)
-torch_vector_field_jacobian = vmap(jacrev(vector_field))
-# explicit_jacobian = vector_field_jacobian(x)
-torch_jacobian = torch_vector_field_jacobian(x)
-torch_jacobian_div = torch.diagonal(torch_jacobian, dim1=1, dim2=2).sum(-1)
-
-# print(f'Explicit Jacobian:\n{explicit_jacobian}')
-print(f'Torch Jacobian:\n{torch_jacobian}')
-print(f'Torch Jacobian divergence:\n{torch_jacobian_div}')
-# jacobians_equal = torch.allclose(explicit_jacobian, torch_jacobian)
-# print(f'Jacobians equal: {jacobians_equal}')
-
-
-def vector_field_divergence(x):
-    div = 3*x[0]**2 + 2*x[1]
+def vector_field_divergence(t, x):
+    div = 3*x[:, 0]**2 + 2*x[:, 1]
     return div
 
 
-vector_field_divergence = vmap(vector_field_divergence)
+def compute_exact_divergence(t, x):
+    """
+    Computes exact divergence using a loop over dimensions with standard autograd.
+    Complexity: O(Dim) backprops.
+    """
+    with torch.enable_grad():
+        x = x.clone().requires_grad_(True)
+        dx = vector_field(t, x)
+
+        trace = torch.zeros(x.shape[0], dtype=x.dtype)
+
+        grad_outputs = torch.eye(x.shape[-1], dtype=x.dtype, device=x.device)
+        grad_outputs = grad_outputs.expand(*x.shape, -1).movedim(-1, 0)
+
+        (jacobian,) = torch.autograd.grad(
+            dx, x,
+            grad_outputs=grad_outputs,
+            create_graph=True, is_grads_batched=True
+        )
+        trace = torch.einsum("i...i", jacobian)
+
+    return trace
 
 
-def torch_vector_field_divergence(x) -> tuple[torch.Tensor, torch.Tensor]:
-    divergence = 0
-    for i in range(len(x)):
-        e_i = torch.zeros_like(x)
-        e_i[i] = 1.0
-        x_eval, jvp_result = jvp(vector_field, (x,), (e_i,))
-        print(jvp_result)
-        divergence += jvp_result.flatten()[i]
-    return x_eval, divergence
-
-
-torch_vector_field_divergence = vmap(torch_vector_field_divergence)
-
-
-explicit_divergence = vector_field_divergence(x)
-x_eval, torch_divergence = torch_vector_field_divergence(x)
-print(f'Explicit divergence: {explicit_divergence}')
-print(f'Torch divergence: {torch_divergence}')
-print(f'Torch divergence x eval: {x_eval}')
-divergences_equal = torch.allclose(explicit_divergence, torch_divergence)
-print(f'Divergences equal: {divergences_equal}')
+explicit_divergence = vector_field_divergence(t, x)
+torch_autograd_divergence = compute_exact_divergence(t, x)
+print(f'Explicit divergence:\n{explicit_divergence}')
+print(f'Torch autograd divergence:\n{torch_autograd_divergence}')
+autograd_equal = torch.allclose(
+    explicit_divergence, torch_autograd_divergence)
+print(f'Torch autograd divergence equal: {autograd_equal}')

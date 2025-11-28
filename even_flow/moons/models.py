@@ -20,15 +20,14 @@ from ..models.mlp import ActivationsType, DimsType, TimeEmbeddingMLP
 type AdjointType = Annotated[
     bool,
     Field(
-        default=True,
-        help="Whether to use the adjoint method for gradient computation."
+        description="Whether to use the adjoint method for gradient computation."
     )
 ]
 
 type SolverType = Annotated[
     str,
     Field(
-        help="The ODE solver method passed to `odeint`/`odeint_adjoint`."
+        description="The ODE solver method passed to `odeint`/`odeint_adjoint`."
     )
 ]
 
@@ -36,7 +35,7 @@ type AToleranceType = Annotated[
     float,
     Field(
         gt=0.0,
-        help="Absolute Tolerance for the ODE solver."
+        description="Absolute Tolerance for the ODE solver."
     )
 ]
 
@@ -44,7 +43,7 @@ type RToleranceType = Annotated[
     float,
     Field(
         gt=0.0,
-        help="Relative Tolerance for the ODE solver."
+        description="Relative Tolerance for the ODE solver."
     )
 ]
 
@@ -52,7 +51,7 @@ type LearningRateType = Annotated[
     float,
     Field(
         gt=0.0,
-        help="Learning rate for the optimizer."
+        description="Learning rate for the optimizer."
     )
 ]
 

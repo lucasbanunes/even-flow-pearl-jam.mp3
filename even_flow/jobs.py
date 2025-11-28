@@ -74,10 +74,8 @@ class BaseJob(BaseModel, ABC):
             end_start = datetime.now(timezone.utc).timestamp()
             mlflow.log_metric('exec_end', end_start)
             mlflow.log_metric("exec_duration", end_start - exec_start)
-            self.id_ = active_run.info.run_id
-            self.name = active_run.data.tags.get('mlflow.runName', None)
-        # client = mlflow.MlflowClient()
-        # self.mlflow_run = client.get_run(self.id_)
+
+        return self.id_
 
     @classmethod
     @abstractmethod

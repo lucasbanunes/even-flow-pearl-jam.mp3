@@ -14,6 +14,7 @@ import json
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
+from mlflow.models.model import ModelInfo
 
 
 from .dataset import MoonsDataset
@@ -248,11 +249,13 @@ class MoonsTimeEmbeddingMLPCNFJob(BaseJob, YamlBaseModel):
         logger.info('Fitting model...')
         fit_start = datetime.now(timezone.utc)
         mlflow.log_metric('fit_start', fit_start.timestamp())
-        self.model.fit(self.datamodule, prefix=self.MODEL_PREFIX)
+        _, model_info = self.model.fit(self.datamodule, prefix=self.MODEL_PREFIX)
         fit_end = datetime.now(timezone.utc)
         mlflow.log_metric('fit_end', fit_end.timestamp())
         mlflow.log_metric(
-            "fit_duration", (fit_end - fit_start).total_seconds())
+            "fit_duration", (fit_end - fit_start).total_seconds(),
+            model_id=model_info.model_id
+        )
 
         dataloaders = {
             'train': self.datamodule.train_dataloader(),
@@ -276,23 +279,32 @@ class MoonsTimeEmbeddingMLPCNFJob(BaseJob, YamlBaseModel):
         for dataset, loader in dataloaders.items():
             logger.info(f'Evaluating model on {dataset} dataset')
             eval_start = datetime.now(timezone.utc)
-            mlflow.log_metric(f'{dataset}.eval_start', eval_start.timestamp())
+            mlflow.log_metric(f'{dataset}.eval_start', eval_start.timestamp(),
+                              model_id=model_info.model_id)
             metrics = self.model.evaluate(loader)
             eval_end = datetime.now(timezone.utc)
-            mlflow.log_metric(f'{dataset}.eval_end', eval_end.timestamp())
+            mlflow.log_metric(f'{dataset}.eval_end', eval_end.timestamp(),
+                              model_id=model_info.model_id)
             mlflow.log_metric(
                 f"{dataset}.eval_duration",
-                (eval_end - eval_start).total_seconds()
+                (eval_end - eval_start).total_seconds(),
+                model_id=model_info.model_id
             )
-            metrics = {k: v.item() for k, v in metrics.items()}
+            for k, v in metrics.items():
+                if isinstance(v, torch.Tensor):
+                    metrics[k] = v.item()
+                else:
+                    metrics[k] = v
             self.metrics[dataset].update(metrics)
 
-        self.log_metrics(tmp_dir)
+        self.log_metrics(tmp_dir, model_info)
 
-    def log_metrics(self, tmp_dir: Path):
+    def log_metrics(self, tmp_dir: Path, model_info: ModelInfo):
         for dataset, metrics in self.metrics.items():
             for metric_name, metric_value in metrics.items():
-                mlflow.log_metric(f"{dataset}.{metric_name}", metric_value)
+                mlflow.log_metric(f"{dataset}.{metric_name}",
+                                  metric_value,
+                                  model_id=model_info.model_id)
 
         metrics_json = tmp_dir / self.METRICS_ARTIFACT_PATH
         with metrics_json.open('w') as f:

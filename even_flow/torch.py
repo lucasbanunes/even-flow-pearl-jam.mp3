@@ -44,7 +44,6 @@ def memory_optimized_divergence1d(func: Callable[[torch.Tensor], torch.Tensor],
             e_i = torch.zeros_like(x)
             e_i[i] = 1.0
             x_eval, jvp_result = jvp(func, (x,), (e_i,))
-            print(jvp_result)
             divergence += jvp_result.flatten()[i]
         return x_eval, divergence
 

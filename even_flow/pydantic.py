@@ -52,10 +52,6 @@ class MLFlowLoggedModel(BaseModel, ABC):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    id_: IdType = None
-    name: NameType = None
-    # mlflow_run: RunType = None
-
     @abstractmethod
     def _to_mlflow(self, prefix: str = '') -> None:
         raise NotImplementedError(
@@ -63,10 +59,6 @@ class MLFlowLoggedModel(BaseModel, ABC):
 
     def to_mlflow(self, prefix: str = '') -> None:
         self._to_mlflow(prefix)
-        mlflow_run = mlflow.active_run()
-        self.id_ = mlflow_run.info.run_id
-        self.name = mlflow_run.data.tags.get('mlflow.runName', None)
-        # self.mlflow_run = mlflow.active_run()
 
     @classmethod
     @abstractmethod
