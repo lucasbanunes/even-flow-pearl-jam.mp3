@@ -79,6 +79,10 @@ type VectorFieldType = Annotated[
     MLFlowLoggedClass,
     Field(description="The vector field defining the CNF transformation.")
 ]
+type ProfilerType = Annotated[
+    Literal['simple', 'advanced'] | None,
+    Field(description="The profiler to use during training")
+]
 
 
 class CNF(L.LightningModule):
@@ -303,6 +307,7 @@ class CNFModel(MLFlowLoggedModel):
     mode: MetricModeType = 'min'
     monitor: MonitorType = 'val_loss'
     num_sanity_val_steps: int = 5
+    profiler: ProfilerType = 'simple'
 
     _lightning_module: Annotated[
         CNF | None,
@@ -452,7 +457,7 @@ class CNFModel(MLFlowLoggedModel):
             profiler_filename = "profiler-results"
             fit_profiler_filename = f'fit-{profiler_filename}.txt'
             profiler_dir = tmp_dir
-            profiler = SimpleProfiler(
+            profiler = self.get_profiler(
                 dirpath=str(profiler_dir),
                 filename=profiler_filename
             )
@@ -501,6 +506,14 @@ class CNFModel(MLFlowLoggedModel):
         metrics = self.lightning_module.get_test_metrics()
         self.lightning_module.reset_metrics()
         return metrics
+
+    def get_profiler(self, **kwargs) -> SimpleProfiler | AdvancedProfiler:
+        if self.profiler == 'simple':
+            return SimpleProfiler(**kwargs)
+        elif self.profiler == 'advanced':
+            return AdvancedProfiler(**kwargs)
+        else:
+            raise ValueError(f"Unsupported profiler: {self.profiler}")
 
 
 class TimeEmbeddingMLPCNFModel(CNFModel):
