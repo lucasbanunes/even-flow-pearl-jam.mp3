@@ -115,18 +115,32 @@ class NeuralODEModule(L.LightningModule):
         )
         return self.base_distribution.log_prob(z[-1]).reshape(-1, 1)
 
+    @torch.no_grad()
     def sample(self, shape: tuple[int]) -> torch.Tensor:
-        with torch.no_grad():
-            z = self.base_distribution.sample(shape)
-            x = odeint(
-                func=self.vector_field,
-                y0=z,
-                t=self.integration_times.flip(0),
-                method=self.solver,
-                atol=self.atol,
-                rtol=self.rtol,
-            )
+        z = self.base_distribution.sample(shape)
+        x = odeint(
+            func=self.vector_field,
+            y0=z,
+            t=self.integration_times.flip(0),
+            method=self.solver,
+            atol=self.atol,
+            rtol=self.rtol,
+        )
         return x[-1]
+
+    @torch.no_grad()
+    def trajectory(self,
+                   x: torch.Tensor,
+                   integration_times: torch.Tensor) -> torch.Tensor:
+        traj = self.odeint_func(
+            func=self.vector_field,
+            y0=x,
+            t=integration_times,
+            method=self.solver,
+            atol=self.atol,
+            rtol=self.rtol,
+        )
+        return traj
 
     def training_step(self, batch, batch_idx):
         log_prob = self.forward(batch[0])
@@ -318,6 +332,14 @@ class NeuralODEModel(LightningModel):
     def sample(self, shape: tuple[int],
                context: torch.Tensor | None = None) -> torch.Tensor:
         return self.lightning_module.sample(shape)
+
+    def trajectory(self,
+                   x: torch.Tensor,
+                   integration_times: torch.Tensor) -> torch.Tensor:
+        return self.lightning_module.trajectory(
+            x=x,
+            integration_times=integration_times
+        )
 
 
 class TimeEmbeddingMLPNeuralODEModel(NeuralODEModel):
