@@ -1,17 +1,19 @@
 datamodule:
   batch_size: 32
-max_epochs: 3
 model:
-  n_classes: 2
-  input_dims: 2
-  time_embed_dims: 3
-  time_embed_freq: 10
-  neurons_per_layer:
-    - 13
-    - 13
-    - 2
-  activations:
-    - relu
-    - relu
-    - relu
-monitor: val_loss
+  input_shape: [2]
+  vector_field:
+    input_dims: 2
+    time_embed_dims: 3
+    time_embed_freq: 10
+    neurons_per_layer:
+      - 13
+      - 13
+      - 2
+    activations:
+      - tanh
+      - tanh
+      - linear
+  monitor: val_loss
+  mode: min
+  max_epochs: 3

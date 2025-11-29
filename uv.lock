@@ -489,6 +489,7 @@ dependencies = [
     { name = "torchmetrics" },
     { name = "torchvision" },
     { name = "typer" },
+    { name = "zuko" },
 ]
 
 [package.dev-dependencies]
@@ -504,21 +505,22 @@ requires-dist = [
     { name = "matplotlib", specifier = "==3.10.7" },
     { name = "mlflow", specifier = "==3.6.0" },
     { name = "mplhep", specifier = "==0.4.1" },
-    { name = "onnx", specifier = ">=1.19.1" },
-    { name = "onnxscript", specifier = ">=0.5.6" },
+    { name = "onnx", specifier = "==1.19.1" },
+    { name = "onnxscript", specifier = "==0.5.6" },
     { name = "scikit-learn", specifier = "==1.7.2" },
     { name = "seaborn", specifier = "==0.13.2" },
     { name = "torch", specifier = "==2.9.1" },
     { name = "torchdiffeq", specifier = "==0.2.5" },
     { name = "torchmetrics", specifier = "==1.8.2" },
-    { name = "torchvision", specifier = ">=0.24.1" },
+    { name = "torchvision", specifier = "==0.24.1" },
     { name = "typer", specifier = "==0.20.0" },
+    { name = "zuko", specifier = "==1.5.0" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "pytest", specifier = ">=9.0.1" },
-    { name = "pytest-env", specifier = ">=1.2.0" },
+    { name = "pytest", specifier = "==9.0.1" },
+    { name = "pytest-env", specifier = "==1.2.0" },
 ]
 
 [[package]]
@@ -2902,4 +2904,17 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e3/02/0f2892c661036d50ede074e376733dca2ae7c6eb617489437771209d4180/zipp-3.23.0.tar.gz", hash = "sha256:a07157588a12518c9d4034df3fbbee09c814741a33ff63c05fa29d26a2404166", size = 25547, upload-time = "2025-06-08T17:06:39.4Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2e/54/647ade08bf0db230bfea292f893923872fd20be6ac6f53b2b936ba839d75/zipp-3.23.0-py3-none-any.whl", hash = "sha256:071652d6115ed432f5ce1d34c336c0adfd6a884660d1e9712a256d3d3bd4b14e", size = 10276, upload-time = "2025-06-08T17:06:38.034Z" },
+]
+
+[[package]]
+name = "zuko"
+version = "1.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "torch" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/db/98/eef245c5f860da4bce69192cc98a5cb91f8c31e29f0364a52e2a1106e309/zuko-1.5.0.tar.gz", hash = "sha256:86ae48e3e8fe79841acbc4b2c54502ab22b2ba1a50a646ad7618303718e5c7b1", size = 44623, upload-time = "2025-10-03T18:06:57.061Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d8/35/9326db55f068b6a10b79498ee430fc134a2f7172239340da99ed617aa075/zuko-1.5.0-py3-none-any.whl", hash = "sha256:607ecca75a031cb82692266782e28cb7084f2dfe6e4bbea57682f7f45199726d", size = 47366, upload-time = "2025-10-03T18:06:55.767Z" },
 ]

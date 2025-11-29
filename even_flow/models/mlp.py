@@ -96,8 +96,9 @@ def build_mlp(
                    activations)
     for input_dim, output_dim, activation in iterator:
         model.append(nn.Linear(input_dim, output_dim))
-        if activation is not None:
-            model.append(TORCH_MODULES[activation]())
+        if activation is None or activation == 'linear':
+            continue
+        model.append(TORCH_MODULES[activation]())
     model.example_input_array = torch.randn(dims[0])
     return model
 
@@ -137,8 +138,9 @@ class TimeEmbeddingMLP(nn.Module):
         self.input_dims = input_dims
         self.time_embed_dims = time_embed_dims
         self.time_embed_freq = time_embed_freq
-        self.model_dims = [self.input_dims +
-                           2 * (self.time_embed_dims // 2)] + neurons_per_layer
+        self.model_input_dims = (self.input_dims +
+                                 2 * (self.time_embed_dims // 2))
+        self.model_dims = [self.model_input_dims] + neurons_per_layer
         self.output_dims = self.model_dims[-1]
         self.activations = activations
         self.model = build_mlp(self.model_dims, self.activations)
@@ -222,7 +224,8 @@ class TimeEmbeddingMLPConfig(MLFlowLoggedModel):
         mlflow.log_param(f'{prefix}input_dims', self.input_dims)
         mlflow.log_param(f'{prefix}time_embed_dims', self.time_embed_dims)
         mlflow.log_param(f'{prefix}time_embed_freq', self.time_embed_freq)
-        mlflow.log_param(f'{prefix}neurons_per_layer', json.dumps(self.neurons_per_layer))
+        mlflow.log_param(f'{prefix}neurons_per_layer',
+                         json.dumps(self.neurons_per_layer))
         mlflow.log_param(f'{prefix}activations', json.dumps(self.activations))
         json_str = self.model_dump_json(indent=4,
                                         exclude=['id_', 'name'])

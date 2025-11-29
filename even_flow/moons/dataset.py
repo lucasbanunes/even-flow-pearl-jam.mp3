@@ -86,9 +86,18 @@ class MoonsDataset(L.LightningDataModule, MLFlowLoggedClass):
         self.batch_size = batch_size
         self.random_state = random_state
 
-        self._train_dataloader = None
-        self._val_dataloader = None
-        self._test_dataloader = None
+        self.train_X, self.train_y, self._train_dataloader = self.generate_dataloader(
+            n_samples=self.train_samples,
+            random_state=self.random_state,
+            float_label=True)
+
+        self.val_X, self.val_y, self._val_dataloader = self.generate_dataloader(
+            n_samples=self.val_samples,
+            random_state=self.random_state + 1)
+
+        self.test_X, self.test_y, self._test_dataloader = self.generate_dataloader(
+            n_samples=self.test_samples,
+            random_state=self.random_state + 2)
 
     def train_dataloader(self) -> torch.utils.data.DataLoader:
         """
@@ -96,11 +105,6 @@ class MoonsDataset(L.LightningDataModule, MLFlowLoggedClass):
         Returns:
             Training DataLoader with moon-shaped data
         """
-        if self._train_dataloader is None:
-            self._train_dataloader = self.generate_dataloader(
-                n_samples=self.train_samples,
-                random_state=self.random_state,
-                float_label=True)
         return self._train_dataloader
 
     def val_dataloader(self) -> torch.utils.data.DataLoader:
@@ -110,10 +114,6 @@ class MoonsDataset(L.LightningDataModule, MLFlowLoggedClass):
         Returns:
             Validation DataLoader with moon-shaped data
         """
-        if self._val_dataloader is None:
-            self._val_dataloader = self.generate_dataloader(
-                n_samples=self.val_samples,
-                random_state=self.random_state + 1)
         return self._val_dataloader
 
     def test_dataloader(self) -> torch.utils.data.DataLoader:
@@ -123,10 +123,6 @@ class MoonsDataset(L.LightningDataModule, MLFlowLoggedClass):
         Returns:
             Test DataLoader with moon-shaped data
         """
-        if self._test_dataloader is None:
-            self._test_dataloader = self.generate_dataloader(
-                n_samples=self.test_samples,
-                random_state=self.random_state + 2)
         return self._test_dataloader
 
     def generate_dataloader(self,
@@ -146,16 +142,18 @@ class MoonsDataset(L.LightningDataModule, MLFlowLoggedClass):
         moons, labels = make_moons(n_samples=n_samples,
                                    noise=self.noise,
                                    random_state=random_state)
+        moons = torch.from_numpy(moons.astype('float32'))
         labels = labels.reshape(-1, 1)
         if float_label:
             labels = labels.astype('float32')
         else:
             labels = labels.astype('int64')
-        dataset = torch.utils.data.TensorDataset(torch.from_numpy(moons.astype('float32')),
-                                                 torch.from_numpy(labels))
+        labels = torch.from_numpy(labels)
+        dataset = torch.utils.data.TensorDataset(moons,
+                                                 labels)
         dataloader = torch.utils.data.DataLoader(
             dataset, batch_size=self.batch_size)
-        return dataloader
+        return moons, labels, dataloader
 
     @classmethod
     def pydantic_before_validator(cls, v: Any) -> Self:
@@ -200,7 +198,8 @@ class MoonsDataset(L.LightningDataModule, MLFlowLoggedClass):
         if prefix:
             prefix += "."
         return cls(
-            train_samples=int(mlflow_run.data.params[f'{prefix}train_samples']),
+            train_samples=int(
+                mlflow_run.data.params[f'{prefix}train_samples']),
             val_samples=int(mlflow_run.data.params[f'{prefix}val_samples']),
             test_samples=int(mlflow_run.data.params[f'{prefix}test_samples']),
             noise=float(mlflow_run.data.params[f'{prefix}noise']),

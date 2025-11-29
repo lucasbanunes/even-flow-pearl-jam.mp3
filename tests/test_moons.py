@@ -5,12 +5,14 @@ import mlflow
 from even_flow.moons.cli import (
     time_embedding_mlp_neural_ode,
     time_embedding_mlp_cnf,
-    time_embedding_mlp_cnf_hutchingson
+    time_embedding_mlp_cnf_hutchingson,
+    real_nvp
 )
 from even_flow.moons.jobs import (
     MoonsTimeEmbeddinngMLPNeuralODEJob,
     MoonsTimeEmbeddingMLPCNFJob,
-    MoonsTimeEmbeddingMLPCNFHutchingsonJob
+    MoonsTimeEmbeddingMLPCNFHutchingsonJob,
+    MoonsRealNVPJob
 )
 
 
@@ -110,6 +112,40 @@ def test_cli_time_embedding_mlp_cnf_hutchingson(data_dir: Path):
         ['uv', 'run', 'python', 'cli.py',
          'moons',
          'time-embedding-mlp-cnf-hutchingson',
+         '--config', str(config)],
+        capture_output=True,
+        text=True
+    )
+    logging.info(f"STDOUT:\n{result.stdout}")
+    logging.info(f"STDERR:\n{result.stderr}")
+    assert result.returncode == 0, "CLI command failed."
+
+
+def test_real_nvp(data_dir: Path):
+
+    mlflow.set_experiment(f"{__name__}_test_real_nvp")
+
+    config = data_dir / 'test_moons' / 'test_real_nvp.yaml'
+    job = real_nvp(config)
+    loaded_job = MoonsRealNVPJob.from_mlflow_run_id(
+        job.id_
+    )
+    job_dict = job.model_dump()
+    loaded_job_dict = loaded_job.model_dump()
+    logging.info(f"Original job: {job_dict}")
+    logging.info(f"Loaded job: {loaded_job_dict}")
+    assert job_dict == loaded_job_dict, "The loaded job does not match the original job."
+
+
+def test_cli_real_nvp(data_dir: Path):
+
+    mlflow.set_experiment(f"{__name__}_test_cli_real_nvp")
+
+    config = data_dir / 'test_moons' / 'test_real_nvp.yaml'
+    result = subprocess.run(
+        ['uv', 'run', 'python', 'cli.py',
+         'moons',
+         'real-nvp',
          '--config', str(config)],
         capture_output=True,
         text=True

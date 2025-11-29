@@ -4,6 +4,7 @@ datamodule:
   val_samples: 20
   test_samples: 20
 model:
+  input_shape: [2]
   vector_field:
     input_dims: 2
     time_embed_dims: 3
@@ -15,7 +16,7 @@ model:
     activations:
       - tanh
       - tanh
-      - tanh
+      - linear
   monitor: val_loss
   mode: min
   max_epochs: 3

@@ -20,12 +20,15 @@ from mlflow.models.model import ModelInfo
 
 from .mlp import TimeEmbeddingMLPConfig
 from ..mlflow import tmp_artifact_download, MLFlowLoggedClass
-from ..lightning import (
+from .lightning import (
     CheckpointsDirType,
     MaxEpochsType,
     PatienceType,
     TrainerAcceleratorType,
     TrainerTestVerbosityType,
+    LearningRateType,
+    MetricModeType,
+    MonitorType,
 )
 from ..pydantic import MLFlowLoggedModel
 from ..utils import get_logger
@@ -63,25 +66,18 @@ type RtolType = Annotated[
     float,
     Field(1e-5, description="Relative tolerance for the ODE solver")
 ]
-type LearningRateType = Annotated[
-    float,
-    Field(1e-3, description="Learning rate for the optimizer")
-]
-type MetricModeType = Annotated[
-    Literal['min', 'max'],
-    Field('min', description="Mode for metric monitoring")
-]
-type MonitorType = Annotated[
-    str,
-    Field(description="Metric to monitor during training")
-]
+
 type VectorFieldType = Annotated[
     MLFlowLoggedClass,
     Field(description="The vector field defining the CNF transformation.")
 ]
 type ProfilerType = Annotated[
-    Literal['simple', 'advanced'] | None,
+    Literal['simple', 'advanced'],
     Field(description="The profiler to use during training")
+]
+type MinDeltaType = Annotated[
+    float,
+    Field(1e-3, description="Minimum change in the monitored metric to qualify as an improvement")
 ]
 
 
@@ -97,10 +93,14 @@ class CNF(L.LightningModule):
         if not self.adjoint:
             raise ValueError("Only adjoint method is currently supported.")
 
+        self.input_shape = model_config.input_shape
+        self.sum_dims = tuple(range(1, len(self.input_shape)+1))
         base_distribution = model_config.base_distribution
         if base_distribution is None or base_distribution == 'standard_normal':
-            self.base_distribution = torch.distributions.Normal(
-                loc=0.0, scale=1.0)
+            self.base_distribution = torch.distributions.MultivariateNormal(
+                loc=torch.zeros(self.input_shape),
+                covariance_matrix=torch.eye(self.input_shape[0])
+            )
         elif base_distribution == 'uniform':
             self.base_distribution = torch.distributions.Uniform(
                 low=-1.0, high=1.0)
@@ -139,7 +139,9 @@ class CNF(L.LightningModule):
         return metrics
 
     def forward(self, z0: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        div0 = torch.zeros(z0.shape[0], 1, dtype=z0.dtype)
+        div0 = self.compute_divergence(self.integration_times[0],
+                                       z0)
+        # div0 = torch.zeros(z0.shape[0], 1, dtype=z0.dtype)
 
         z, int_div = odeint_adjoint(
             self.augmented_function,
@@ -152,23 +154,17 @@ class CNF(L.LightningModule):
         )
         return z[-1], int_div[-1]
 
-    def forward_no_adjoint(self, z0: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        div0 = torch.zeros(z0.shape[0], 1, dtype=z0.dtype)
-
-        z, int_div = odeint(
-            self.augmented_function,
-            (z0, div0),
-            self.integration_times.type_as(z0),
-            method=self.solver,
-            atol=self.atol,
-            rtol=self.rtol
-        )
-        return z[-1], int_div[-1]
-
     def augmented_function(self,
                            t: torch.Tensor,
                            state: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         z, _ = state
+        divergence = self.compute_divergence(t, z)
+
+        return z, divergence.reshape(-1, 1)
+
+    def compute_divergence(self,
+                           t: torch.Tensor,
+                           z: torch.Tensor) -> torch.Tensor:
         with torch.enable_grad():
             z = z.clone().requires_grad_(True)
             dzdt = self.vector_field.forward(t, z)
@@ -182,33 +178,12 @@ class CNF(L.LightningModule):
             )
             divergence = torch.einsum("i...i", jacobian)
 
-        # fixed_t = partial(self.vector_field, t)
-        # divergence_func = self.divergence_strategy(fixed_t)
-        # vectorized_dvergence_func = vmap(divergence_func)
-        # z_eval, divergence = vectorized_dvergence_func(
-        #     z.reshape(z.shape[0], 1, z.shape[1]))
-        # z_eval = z_eval.squeeze()
-        # divergence = divergence.reshape(divergence.shape[0], 1)
-
-        return z, divergence.reshape(-1, 1)
+        return divergence.reshape(-1, 1)
 
     def log_prob(self, z0: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         zf, div_int = self.forward(z0)
-        logp_zf = self.base_distribution.log_prob(zf)
-        return zf, div_int, logp_zf - div_int
-
-    def sample(self, num_samples: int) -> torch.Tensor:
-        zf = self.base_distribution.sample((num_samples,))
-        integration_times_reversed = torch.flip(self.integration_times, [0])
-        z, _ = odeint(
-            self.vector_field,
-            zf,
-            integration_times_reversed.type_as(zf),
-            method=self.solver,
-            atol=self.atol,
-            rtol=self.rtol
-        )
-        return z[-1]
+        logp_zf = self.base_distribution.log_prob(zf).reshape(-1, 1)
+        return zf, div_int, logp_zf + div_int
 
     def training_step(self,
                       batch: tuple[torch.Tensor],
@@ -252,6 +227,21 @@ class CNF(L.LightningModule):
             lr=self.learning_rate
         )
         return optimizer
+
+    def sample(self, num_samples: int) -> torch.Tensor:
+        with torch.no_grad():
+            zf = self.base_distribution.sample((num_samples,))
+            integration_times_reversed = torch.flip(self.integration_times,
+                                                    dims=[0])
+            z0 = odeint(
+                self.vector_field,
+                zf,
+                integration_times_reversed.type_as(zf),
+                method=self.solver,
+                atol=self.atol,
+                rtol=self.rtol
+            )
+            return zf, z0[-1]
 
 
 class CNFHutchingson(CNF):
@@ -308,6 +298,8 @@ class CNFModel(MLFlowLoggedModel):
     monitor: MonitorType = 'val_loss'
     num_sanity_val_steps: int = 5
     profiler: ProfilerType = 'simple'
+    min_delta: MinDeltaType = 1e-3
+    input_shape: tuple[int, ...]
 
     _lightning_module: Annotated[
         CNF | None,
@@ -347,6 +339,8 @@ class CNFModel(MLFlowLoggedModel):
         mlflow.log_param(f'{prefix}monitor', self.monitor)
         mlflow.log_param(f'{prefix}num_sanity_val_steps',
                          self.num_sanity_val_steps)
+        mlflow.log_param(f'{prefix}min_delta', self.min_delta)
+        mlflow.log_param(f'{prefix}input_shape', json.dumps(self.input_shape))
 
     @classmethod
     def from_mlflow(cls, mlflow_run, prefix='', kwargs: dict = {}) -> dict[str, Any]:
@@ -389,6 +383,9 @@ class CNFModel(MLFlowLoggedModel):
                                                        cls.model_fields['monitor'].default)
         kwargs['num_sanity_val_steps'] = int(mlflow_run.data.params.get(f'{formated_prefix}num_sanity_val_steps',
                                                                         cls.model_fields['num_sanity_val_steps'].default))
+        kwargs['min_delta'] = float(mlflow_run.data.params.get(f'{formated_prefix}min_delta',
+                                                               cls.model_fields['min_delta'].default))
+        kwargs['input_shape'] = json.loads(mlflow_run.data.params[f'{formated_prefix}input_shape'])
         vector_field_type: Type[MLFlowLoggedClass] = cls.model_fields['vector_field'].annotation
         kwargs['vector_field'] = vector_field_type.from_mlflow(
             mlflow_run,
@@ -450,7 +447,7 @@ class CNFModel(MLFlowLoggedModel):
                     monitor=self.monitor,
                     patience=self.patience,
                     mode=self.mode,
-                    min_delta=1e-3
+                    min_delta=self.min_delta
                 ),
                 checkpoint,
             ]
@@ -495,6 +492,9 @@ class CNFModel(MLFlowLoggedModel):
             shutil.rmtree(str(checkpoints_dir))
 
         return trainer, model_info
+
+    def sample(self, shape: tuple[int]) -> torch.Tensor:
+        return self.lightning_module.sample(num_samples=shape[0])
 
     def evaluate(self,
                  dataloader: torch.utils.data.DataLoader) -> dict[str, Any]:

@@ -5,7 +5,8 @@ import typer
 from .jobs import (
     MoonsTimeEmbeddinngMLPNeuralODEJob,
     MoonsTimeEmbeddingMLPCNFJob,
-    MoonsTimeEmbeddingMLPCNFHutchingsonJob
+    MoonsTimeEmbeddingMLPCNFHutchingsonJob,
+    MoonsRealNVPJob
 )
 
 app = typer.Typer(
@@ -46,5 +47,15 @@ def time_embedding_mlp_cnf_hutchingson(
 ) -> MoonsTimeEmbeddingMLPCNFHutchingsonJob:
     """Run a Moons Time Embedding MLP CNF Hutchingson training job."""
     job = MoonsTimeEmbeddingMLPCNFHutchingsonJob.from_yaml(config)
+    job.run()
+    return job
+
+
+@app.command()
+def real_nvp(
+    config: ConfigType
+) -> MoonsRealNVPJob:
+    """Run a Moons Real NVP training job."""
+    job = MoonsRealNVPJob.from_yaml(config)
     job.run()
     return job
