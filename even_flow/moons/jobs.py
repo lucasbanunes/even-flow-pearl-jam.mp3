@@ -21,7 +21,7 @@ from ..pydantic import YamlBaseModel
 from ..mlflow import MLFlowLoggedClass, load_json
 from ..models.cnf import (
     TimeEmbeddingMLPCNFModel,
-    TimeEmbeddingMLPCNFHutchingsonModel
+    TimeEmbeddingMLPCNFHutchinsonModel
 )
 from ..models.real_nvp import RealNVPModel
 from ..models.neuralode import TimeEmbeddingMLPNeuralODEModel
@@ -187,12 +187,13 @@ class MoonsTimeEmbeddingMLPCNFJob(BaseMoonsJob):
 
 class MoonsTimeEmbeddingMLPCNFHutchinsonJob(MoonsTimeEmbeddingMLPCNFJob):
 
-    model: TimeEmbeddingMLPCNFHutchingsonModel
+    model: TimeEmbeddingMLPCNFHutchinsonModel
 
 
 class MoonsRealNVPJob(BaseMoonsJob):
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True,
+                              extra='forbid')
 
     DATAMODULE_PREFIX: ClassVar[str] = 'datamodule'
     METRICS_ARTIFACT_PATH: ClassVar[str] = 'metrics.json'

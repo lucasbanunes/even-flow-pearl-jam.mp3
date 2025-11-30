@@ -51,7 +51,8 @@ type RunType = Annotated[
 
 class MLFlowLoggedModel(BaseModel, ABC):
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True,
+                              extra='forbid')
 
     id_: IdType = None
     name: NameType | None = None

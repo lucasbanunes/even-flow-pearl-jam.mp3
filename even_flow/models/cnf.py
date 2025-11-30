@@ -550,5 +550,5 @@ class CNFHutchingsonModel(CNFModel):
         return super().from_mlflow(mlflow_run, prefix, kwargs)
 
 
-class TimeEmbeddingMLPCNFHutchingsonModel(CNFHutchingsonModel):
+class TimeEmbeddingMLPCNFHutchinsonModel(CNFHutchingsonModel):
     vector_field: TimeEmbeddingMLPConfig

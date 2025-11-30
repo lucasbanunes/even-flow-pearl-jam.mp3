@@ -1,17 +1,34 @@
 from typing import Annotated, ClassVar, Type
-from pydantic import PrivateAttr
+from pydantic import Field, PrivateAttr
 import torch
 from zuko.flows import RealNVP
 import lightning as L
 from torchmetrics import MetricCollection, MeanMetric
 import mlflow
 from mlflow.entities import Run
+import json
+
+from ..torch import ModuleNameType, TORCH_MODULES
 
 
 from .lightning import (
     LearningRateType,
     LightningModel
 )
+
+type HiddenFeaturesType = Annotated[
+    list[int],
+    Field(
+        description="List of hidden features for the coupling layers' neural networks."
+    )
+]
+
+type ActivationType = Annotated[
+    ModuleNameType,
+    Field(
+        description="Activation function name for the coupling layers' neural networks."
+    )
+]
 
 
 class RealNVPModule(L.LightningModule):
@@ -23,7 +40,9 @@ class RealNVPModule(L.LightningModule):
             features=model_config.features,
             context=model_config.context,
             transforms=model_config.transforms,
-            randmask=model_config.randmask
+            randmask=model_config.randmask,
+            hidden_features=model_config.hidden_features,
+            activation=TORCH_MODULES[model_config.activation],
         )
         self.learning_rate = model_config.learning_rate
 
@@ -109,6 +128,8 @@ class RealNVPModel(LightningModel):
     transforms: int = 3
     randmask: bool = False
     learning_rate: LearningRateType = 1e-3
+    hidden_features: HiddenFeaturesType
+    activation: ActivationType
 
     _lightning_module: Annotated[
         RealNVPModule | None,
@@ -127,6 +148,8 @@ class RealNVPModel(LightningModel):
         mlflow.log_param(f"{prefix}transforms", self.transforms)
         mlflow.log_param(f"{prefix}randmask", self.randmask)
         mlflow.log_param(f"{prefix}learning_rate", self.learning_rate)
+        mlflow.log_param(f"{prefix}hidden_features", json.dumps(self.hidden_features))
+        mlflow.log_param(f"{prefix}activation", self.activation)
 
     @classmethod
     def from_mlflow(cls,
@@ -149,6 +172,9 @@ class RealNVPModel(LightningModel):
         kwargs['learning_rate'] = float(
             mlflow_run.data.params.get(f'{prefix}learning_rate',
                                        cls.model_fields['learning_rate'].default))
+        hidden_features_str = mlflow_run.data.params[f'{prefix}hidden_features']
+        kwargs['hidden_features'] = json.loads(hidden_features_str)
+        kwargs['activation'] = mlflow_run.data.params[f'{prefix}activation']
         instance = cls(**kwargs)
         return instance
 

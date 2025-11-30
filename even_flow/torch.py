@@ -21,7 +21,7 @@ from torch import nn
 from torch.func import jvp
 
 
-type ModuleNameType = Literal['relu', 'sigmoid', 'tanh']
+type ModuleNameType = Literal['relu', 'sigmoid', 'tanh', 'gelu']
 
 
 TORCH_LOSSES = {
