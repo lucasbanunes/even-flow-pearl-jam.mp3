@@ -31,6 +31,8 @@ def test_time_embedding_mlp_neural_ode(data_dir: Path):
     logging.info(f"Original job: {job_dict}")
     logging.info(f"Loaded job: {loaded_job_dict}")
     assert job_dict == loaded_job_dict, "The loaded job does not match the original job."
+    # Ensures that the Lightning module is loaded properly.
+    loaded_job.model.lightning_module
 
 
 def test_cli_time_embedding_mlp_neural_ode(data_dir: Path):
@@ -135,6 +137,8 @@ def test_real_nvp(data_dir: Path):
     logging.info(f"Original job: {job_dict}")
     logging.info(f"Loaded job: {loaded_job_dict}")
     assert job_dict == loaded_job_dict, "The loaded job does not match the original job."
+    # Ensures that the Lightning module is loaded properly.
+    loaded_job.model.lightning_module
 
 
 def test_cli_real_nvp(data_dir: Path):

@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from typer import Option
 import yaml
 import mlflow
+from mlflow.entities import Run
 
 
 class YamlBaseModel(BaseModel):
@@ -41,7 +42,7 @@ type NameType = Annotated[
 ]
 
 type RunType = Annotated[
-    mlflow.entities.Run | None,
+    Run | None,
     Field(
         description="MLflow Run associated with the class."
     )
@@ -52,17 +53,21 @@ class MLFlowLoggedModel(BaseModel, ABC):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+    id_: IdType = None
+    name: NameType | None = None
+    prefix: str = ''
+
     @abstractmethod
     def _to_mlflow(self, prefix: str = '') -> None:
         raise NotImplementedError(
             "to_mlflow method must be implemented by subclasses.")
 
     def to_mlflow(self, prefix: str = '') -> None:
-        self._to_mlflow(prefix)
+        self._to_mlflow(prefix=prefix)
 
     @classmethod
     @abstractmethod
-    def from_mlflow(cls, mlflow_run: mlflow.entities.Run,
+    def from_mlflow(cls, mlflow_run: Run,
                     prefix: str = '') -> Self:
         raise NotImplementedError(
             "from_mlflow method must be implemented by subclasses.")
@@ -74,7 +79,7 @@ class MLFlowLoggedModel(BaseModel, ABC):
         instance = cls.from_mlflow(mlflow_run, prefix=prefix)
         instance.id_ = run_id
         instance.name = mlflow_run.data.tags.get('mlflow.runName', None)
-        # instance.mlflow_run = mlflow_run
+        instance.prefix = prefix
         return instance
 
 

@@ -150,11 +150,6 @@ class RealNVPModel(LightningModel):
             mlflow_run.data.params.get(f'{prefix}learning_rate',
                                        cls.model_fields['learning_rate'].default))
         instance = cls(**kwargs)
-        instance = cls.load_lightning_module_from_checkpoint(
-            prefix=prefix,
-            mlflow_run=mlflow_run,
-            instance=instance
-        )
         return instance
 
     def sample(self, shape: tuple[int],

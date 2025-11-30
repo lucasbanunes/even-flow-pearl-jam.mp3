@@ -1,4 +1,5 @@
 from abc import abstractmethod, ABC
+from collections import defaultdict
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Annotated, Self
@@ -6,6 +7,8 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, Field, ConfigDict
 import mlflow
 from typer import Option
+import pandas as pd
+import numpy as np
 
 from .utils import get_logger
 
@@ -97,3 +100,18 @@ class BaseJob(BaseModel, ABC):
         instance.name = mlflow_run.data.tags.get('mlflow.runName', None)
         # instance.mlflow_run = mlflow_run
         return instance
+
+    def get_metric_history(self,
+                           metrics: list[str]) -> pd.DataFrame:
+        mlflow_client = mlflow.MlflowClient()
+        metric_history = defaultdict(lambda: np.full(len(metrics) + 1, np.nan).tolist())
+        for i, metric in enumerate(metrics):
+            history = mlflow_client.get_metric_history(
+                run_id=self.id_,
+                key=metric
+            )
+            for metric in history:
+                metric_history[metric.step][i] = metric.value
+                metric_history[metric.step][-1] = metric.step
+        data = pd.DataFrame.from_dict(metric_history, orient='index', columns=metrics + ['step'])
+        return data

@@ -116,7 +116,7 @@ class NeuralODEModule(L.LightningModule):
         return self.base_distribution.log_prob(z[-1]).reshape(-1, 1)
 
     @torch.no_grad()
-    def sample(self, shape: tuple[int]) -> torch.Tensor:
+    def sample(self, shape: tuple[int]) -> tuple[torch.Tensor, torch.Tensor]:
         z = self.base_distribution.sample(shape)
         x = odeint(
             func=self.vector_field,
@@ -126,13 +126,13 @@ class NeuralODEModule(L.LightningModule):
             atol=self.atol,
             rtol=self.rtol,
         )
-        return x[-1]
+        return z, x[-1]
 
     @torch.no_grad()
     def trajectory(self,
                    x: torch.Tensor,
                    integration_times: torch.Tensor) -> torch.Tensor:
-        traj = self.odeint_func(
+        traj = odeint(
             func=self.vector_field,
             y0=x,
             t=integration_times,
@@ -322,15 +322,10 @@ class NeuralODEModel(LightningModel):
             )
         )
         instance = cls(**kwargs)
-        instance = cls.load_lightning_module_from_checkpoint(
-            prefix=prefix,
-            mlflow_run=mlflow_run,
-            instance=instance
-        )
         return instance
 
     def sample(self, shape: tuple[int],
-               context: torch.Tensor | None = None) -> torch.Tensor:
+               context: torch.Tensor | None = None):
         return self.lightning_module.sample(shape)
 
     def trajectory(self,

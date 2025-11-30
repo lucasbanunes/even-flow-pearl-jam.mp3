@@ -32,7 +32,7 @@ class BaseMoonsJob(BaseJob, YamlBaseModel):
 
     def plot_comparison(self, n_samples: int = 1000,
                         axes: list[Axes] | None = None
-                        ) -> tuple[Figure, list[Axes]]:
+                        ) -> tuple[np.ndarray, np.ndarray, Figure, list[Axes]]:
         z_samples, x_samples = self.model.sample((n_samples,))
         z_samples = z_samples.detach().cpu().numpy()
         x_samples = x_samples.detach().cpu().numpy()
@@ -56,7 +56,7 @@ class BaseMoonsJob(BaseJob, YamlBaseModel):
             y=x_samples[:, 1].reshape(-1),
             ax=axes[1]
         )
-        return fig, axes
+        return x_samples, z_samples, fig, axes
 
     def _run(self, tmp_dir: Path, active_run: Run):
         logger = get_logger()

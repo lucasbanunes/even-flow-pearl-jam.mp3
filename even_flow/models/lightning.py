@@ -202,7 +202,18 @@ class LightningModel(MLFlowLoggedModel):
     ] = None
 
     @property
-    def lightning_module(self) -> L.LightningModule:
+    def lightning_module(self):
+        if self._lightning_module is not None:
+            return self._lightning_module
+
+        if self.id_:
+            logger = get_logger()
+            logger.debug('Loading Lightning module from checkpoint...')
+            self._lightning_module = self.load_lightning_module_from_checkpoint()
+            return self._lightning_module
+
+        self._lightning_module = self.LIGHTNING_MODULE_TYPE(
+            model_config=self)
         return self._lightning_module
 
     def model_post_init(self, context):
@@ -267,7 +278,7 @@ class LightningModel(MLFlowLoggedModel):
             mlflow.log_artifact(str(checkpoint_temp_path))
             model_info = mlflow.pytorch.log_model(
                 pytorch_model=self.lightning_module,
-                artifact_path=self.LIGHTNING_MODULE_ARTIFACT_PATH.replace('.ckpt', ''))
+                name=self.LIGHTNING_MODULE_ARTIFACT_PATH.replace('.ckpt', ''))
             shutil.rmtree(str(checkpoints_dir))
 
         return trainer, model_info
@@ -319,7 +330,8 @@ class LightningModel(MLFlowLoggedModel):
         mlflow.log_param(f"{prefix}profiler", self.profiler)
         mlflow.log_param(f"{prefix}max_epochs", self.max_epochs)
         mlflow.log_param(f"{prefix}verbose", self.verbose)
-        mlflow.log_param(f"{prefix}num_sanity_val_steps", self.num_sanity_val_steps)
+        mlflow.log_param(f"{prefix}num_sanity_val_steps",
+                         self.num_sanity_val_steps)
         self.checkpoint._to_mlflow(prefix=prefix + 'checkpoint')
         self.early_stopping._to_mlflow(prefix=prefix + 'early_stopping')
 
@@ -351,16 +363,10 @@ class LightningModel(MLFlowLoggedModel):
             prefix=prefix + 'early_stopping')
         return kwargs
 
-    @classmethod
-    def load_lightning_module_from_checkpoint(cls,
-                                              prefix: str,
-                                              mlflow_run: Run,
-                                              instance: Self
-                                              ) -> Self:
+    def load_lightning_module_from_checkpoint(self) -> Self:
         with tmp_artifact_download(
-            run_id=mlflow_run.info.run_id,
-            artifact_path=instance.get_lightning_module_artifact_name(prefix)
+            run_id=self.id_,
+            artifact_path=self.get_lightning_module_artifact_name(self.prefix)
         ) as ckpt_path:
-            instance._lightning_module = cls.LIGHTNING_MODULE_TYPE.load_from_checkpoint(
+            return self.LIGHTNING_MODULE_TYPE.load_from_checkpoint(
                 ckpt_path)
-        return instance
