@@ -34,14 +34,15 @@ datamodule = MoonsDataset(
     random_state=random_state
 )
 
-logger.info('Running MoonsTimeEmbeddinngMLPNeuralODEJob...')
-
+mlflow.set_experiment("Moons Neural ODE")
 rtols = np.logspace(-2, -7, 10)
 atols = np.logspace(-2, -7, 10)
 solvers = ['euler', 'dopri5', 'rk4']
 neurons = [[16, 2], [16, 16, 2], [16, 16, 16, 2]]
-neural_ode_jobs = [
-    MoonsTimeEmbeddinngMLPNeuralODEJob(
+for i, (rtol, atol, solver, neuron_layers) in enumerate(product(rtols, atols, solvers, neurons)):
+    logger.info(
+        f'Runnning job: time-embedding-mlp-neural-ode-{i} | Solver: {solver} | rtol: {rtol} | atol: {atol}')
+    job = MoonsTimeEmbeddinngMLPNeuralODEJob(
         datamodule=datamodule,
         name=f'time-embedding-mlp-neural-ode-{i}',
         max_epochs=3,
@@ -64,18 +65,9 @@ neural_ode_jobs = [
             patience=5,
             verbose=False,
         ),
-
-    ) for i, (rtol, atol, solver, neuron_layers) in enumerate(
-        product(rtols, atols, solvers, neurons))
-]
-logger.info(f'Running {len(neural_ode_jobs)} jobs.')
-
-mlflow.set_experiment("Moons Neural ODE")
-
-for job in neural_ode_jobs:
-    logger.info(
-        f'Runnning job: {job.name} | Solver: {job.model.solver} | rtol: {job.model.rtol} | atol: {job.model.atol}')
+    )
     job.run()
+
 
 mlflow.set_experiment('Moons Real NVP')
 
@@ -84,9 +76,10 @@ hidden_features_options = [
     [64, 64, 64, 64],
     [256, 256]
 ]
-
-realnvp_jobs = [
-    MoonsRealNVPJob(
+for i, hidden_feature in enumerate(hidden_features_options):
+    logger.info(
+        f'Running job: real-nvp-moons-{i} | Hidden features: {hidden_feature}')
+    job = MoonsRealNVPJob(
         name=f'real-nvp-moons-{i}',
         datamodule=datamodule,
         model=RealNVPModel(
@@ -98,11 +91,6 @@ realnvp_jobs = [
             max_epochs=50,
         )
     )
-    for i, hidden_feature in enumerate(hidden_features_options)
-]
-for job in realnvp_jobs:
-    logger.info(
-        f'Running job: {job.name} | Hidden features: {job.model.hidden_features}')
     job.run()
 
 
@@ -110,9 +98,9 @@ mlflow.set_experiment('Moons Exact CNF')
 
 neurons = hidden_features_options.copy()
 activation_options = ['relu', 'gelu']
-
-exact_cnf_jobs = [
-    MoonsTimeEmbeddingMLPCNFJob(
+for i, (activation, neurons_per_layer) in enumerate(product(activation_options, neurons)):
+    logger.info(f'Running job: exact-cnf-moons-{i}')
+    job = MoonsTimeEmbeddingMLPCNFJob(
         name=f'exact-cnf-moons-{i}',
         datamodule=datamodule,
         model=TimeEmbeddingMLPCNFModel(
@@ -134,10 +122,6 @@ exact_cnf_jobs = [
             mode='min',
         )
     )
-    for i, (activation, neurons_per_layer) in enumerate(product(activation_options, neurons))
-]
-for job in exact_cnf_jobs:
-    logger.info(f'Running job: {job.name}')
     job.run()
 
 
@@ -146,8 +130,9 @@ mlflow.set_experiment('Moons Hutchinson CNF')
 neurons = hidden_features_options.copy()
 activation_options = ['relu', 'gelu']
 
-hutchinson_cnf_jobs = [
-    MoonsTimeEmbeddingMLPCNFHutchinsonJob(
+for i, (activation, neurons_per_layer) in enumerate(product(activation_options, neurons)):
+    logger.info(f'Running job: hutchinson-cnf-moons-{i}')
+    job = MoonsTimeEmbeddingMLPCNFHutchinsonJob(
         name=f'hutchinson-cnf-moons-{i}',
         datamodule=datamodule,
         model=TimeEmbeddingMLPCNFModel(
@@ -169,8 +154,4 @@ hutchinson_cnf_jobs = [
             mode='min',
         )
     )
-    for i, (activation, neurons_per_layer) in enumerate(product(activation_options, neurons))
-]
-for job in hutchinson_cnf_jobs:
-    logger.info(f'Running job: {job.name}')
     job.run()

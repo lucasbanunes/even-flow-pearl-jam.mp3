@@ -36,7 +36,7 @@ from ..utils import get_logger
 
 type AdjointType = Annotated[
     bool,
-    Field(True, description="Whether to use the adjoint method for backpropagation")
+    Field(description="Whether to use the adjoint method for backpropagation")
 ]
 type DivergenceStrategyType = Annotated[
     Literal['exact', ],
@@ -52,19 +52,19 @@ type BaseDistributionType = Annotated[
 ]
 type IntegrationTimesType = Annotated[
     list[float] | None,
-    Field(None, description="The timespan for integration")
+    Field(description="The timespan for integration")
 ]
 type SolverType = Annotated[
     str,
-    Field('dopri5', description="The ODE solver to use")
+    Field(description="The ODE solver to use")
 ]
 type AtolType = Annotated[
     float,
-    Field(1e-5, description="Absolute tolerance for the ODE solver")
+    Field(description="Absolute tolerance for the ODE solver")
 ]
 type RtolType = Annotated[
     float,
-    Field(1e-5, description="Relative tolerance for the ODE solver")
+    Field(description="Relative tolerance for the ODE solver")
 ]
 
 type VectorFieldType = Annotated[
@@ -77,7 +77,7 @@ type ProfilerType = Annotated[
 ]
 type MinDeltaType = Annotated[
     float,
-    Field(1e-3, description="Minimum change in the monitored metric to qualify as an improvement")
+    Field(description="Minimum change in the monitored metric to qualify as an improvement")
 ]
 
 
@@ -488,7 +488,7 @@ class CNFModel(MLFlowLoggedModel):
             mlflow.log_artifact(str(checkpoint_temp_path))
             model_info = mlflow.pytorch.log_model(
                 pytorch_model=self.lightning_module,
-                artifact_path='model')
+                name='model')
             shutil.rmtree(str(checkpoints_dir))
 
         return trainer, model_info

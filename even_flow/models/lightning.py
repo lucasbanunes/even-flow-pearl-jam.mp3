@@ -60,12 +60,12 @@ type TrainerTestVerbosityType = Annotated[
 
 type LearningRateType = Annotated[
     float,
-    Field(1e-3, description="Learning rate for the optimizer")
+    Field(description="Learning rate for the optimizer")
 ]
 
 type MetricModeType = Annotated[
     Literal['min', 'max'],
-    Field('min', description="Mode for metric monitoring")
+    Field(description="Mode for metric monitoring")
 ]
 
 type MonitorType = Annotated[

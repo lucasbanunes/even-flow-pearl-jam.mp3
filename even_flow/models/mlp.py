@@ -29,14 +29,14 @@ from ..mlflow import load_json as mlflow_load_json
 type DimsType = Annotated[
     list[int],
     Field(
-        min_items=2,
+        min_length=2,
         description="List of layer dimensions; must have at least one entry."
     )
 ]
 type ActivationsType = Annotated[
     list[str | None],
     Field(
-        min_items=1,
+        min_length=1,
         description="List of activation names length should be len(dims)-1."
     )
 ]
