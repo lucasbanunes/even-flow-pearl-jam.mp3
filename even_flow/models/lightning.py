@@ -267,7 +267,7 @@ class LightningModel(MLFlowLoggedModel):
             mlflow.log_artifact(str(checkpoint_temp_path))
             model_info = mlflow.pytorch.log_model(
                 pytorch_model=self.lightning_module,
-                artifact_path=self.replace('.ckpt', ''))
+                artifact_path=self.LIGHTNING_MODULE_ARTIFACT_PATH.replace('.ckpt', ''))
             shutil.rmtree(str(checkpoints_dir))
 
         return trainer, model_info

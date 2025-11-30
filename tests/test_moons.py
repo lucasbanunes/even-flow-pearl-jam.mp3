@@ -11,7 +11,7 @@ from even_flow.moons.cli import (
 from even_flow.moons.jobs import (
     MoonsTimeEmbeddinngMLPNeuralODEJob,
     MoonsTimeEmbeddingMLPCNFJob,
-    MoonsTimeEmbeddingMLPCNFHutchingsonJob,
+    MoonsTimeEmbeddingMLPCNFHutchinsonJob,
     MoonsRealNVPJob
 )
 
@@ -92,7 +92,7 @@ def test_time_embedding_mlp_cnf_hutchingson(data_dir: Path):
 
     config = data_dir / 'test_moons' / 'test_time_embedding_mlp_cnf_hutchingson.yaml'
     job = time_embedding_mlp_cnf_hutchingson(config)
-    loaded_job = MoonsTimeEmbeddingMLPCNFHutchingsonJob.from_mlflow_run_id(
+    loaded_job = MoonsTimeEmbeddingMLPCNFHutchinsonJob.from_mlflow_run_id(
         job.id_
     )
     job_dict = job.model_dump()

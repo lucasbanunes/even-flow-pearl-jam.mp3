@@ -31,7 +31,8 @@ TORCH_LOSSES = {
 TORCH_MODULES = {
     'relu': nn.ReLU,
     'sigmoid': nn.Sigmoid,
-    'tanh': nn.Tanh
+    'tanh': nn.Tanh,
+    'gelu': nn.GELU,
 }
 
 

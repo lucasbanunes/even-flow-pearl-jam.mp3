@@ -185,7 +185,7 @@ class MoonsTimeEmbeddingMLPCNFJob(BaseMoonsJob):
         return ax
 
 
-class MoonsTimeEmbeddingMLPCNFHutchingsonJob(MoonsTimeEmbeddingMLPCNFJob):
+class MoonsTimeEmbeddingMLPCNFHutchinsonJob(MoonsTimeEmbeddingMLPCNFJob):
 
     model: TimeEmbeddingMLPCNFHutchingsonModel
 
