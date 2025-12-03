@@ -42,7 +42,7 @@ class RealNVPModule(L.LightningModule):
             transforms=model_config.transforms,
             randmask=model_config.randmask,
             hidden_features=model_config.hidden_features,
-            activation=TORCH_MODULES[model_config.activation],
+            activation=TORCH_MODULES.get(model_config.activation, None),
         )
         self.learning_rate = model_config.learning_rate
 
@@ -129,7 +129,7 @@ class RealNVPModel(LightningModel):
     randmask: bool = False
     learning_rate: LearningRateType = 1e-3
     hidden_features: HiddenFeaturesType
-    activation: ActivationType
+    activation: ActivationType | None = None
 
     _lightning_module: Annotated[
         RealNVPModule | None,
@@ -174,7 +174,10 @@ class RealNVPModel(LightningModel):
                                        cls.model_fields['learning_rate'].default))
         hidden_features_str = mlflow_run.data.params[f'{prefix}hidden_features']
         kwargs['hidden_features'] = json.loads(hidden_features_str)
-        kwargs['activation'] = mlflow_run.data.params[f'{prefix}activation']
+        activation_str = mlflow_run.data.params.get(
+            f'{prefix}activation', cls.model_fields['activation'].default
+        )
+        kwargs['activation'] = activation_str if activation_str != 'None' else None
         instance = cls(**kwargs)
         return instance
 

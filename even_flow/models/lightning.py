@@ -107,7 +107,7 @@ class ModelCheckpointConfig(MLFlowLoggedModel):
             'filename': self.filename
         }
         base_kwargs.update(kwargs)
-        return ModelCheckpoint(**base_kwargs)
+        return ModelCheckpoint(save_on_train_epoch_end=True, **base_kwargs)
 
     def _to_mlflow(self, prefix: str = '') -> None:
         if prefix:
@@ -145,13 +145,15 @@ class EarlyStoppingConfig(MLFlowLoggedModel):
     patience: PatienceType = 3
     min_delta: float = 1e-3
     mode: MetricModeType = 'min'
+    stopping_threshold: float | None = None
 
     def get(self) -> EarlyStopping:
         return EarlyStopping(
             monitor=self.monitor,
             patience=self.patience,
             min_delta=self.min_delta,
-            mode=self.mode
+            mode=self.mode,
+            stopping_threshold=self.stopping_threshold
         )
 
     def _to_mlflow(self, prefix: str = '') -> None:
@@ -161,6 +163,8 @@ class EarlyStoppingConfig(MLFlowLoggedModel):
         mlflow.log_param(f"{prefix}.patience", self.patience)
         mlflow.log_param(f"{prefix}.min_delta", self.min_delta)
         mlflow.log_param(f"{prefix}.mode", self.mode)
+        mlflow.log_param(f"{prefix}stopping_threshold",
+                         self.stopping_threshold)
 
     @classmethod
     def from_mlflow(cls, mlflow_run: Run,
@@ -177,6 +181,10 @@ class EarlyStoppingConfig(MLFlowLoggedModel):
                                                cls.model_fields['min_delta'].default))
         kwargs['mode'] = params.get(f"{prefix}mode",
                                     cls.model_fields['mode'].default)
+        kwargs['stopping_threshold'] = params.get(f"{prefix}stopping_threshold",
+                                                  cls.model_fields['stopping_threshold'].default)
+        if kwargs['stopping_threshold'] == 'None':
+            kwargs['stopping_threshold'] = None
         return cls(**kwargs)
 
 

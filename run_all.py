@@ -38,38 +38,38 @@ datamodule = MoonsDataset(
 )
 
 # mlflow.set_experiment("Moons Neural ODE")
-# rtols = np.logspace(-2, -7, 10)
-# atols = np.logspace(-2, -7, 10)
-# solvers = ['euler', 'dopri5', 'rk4']
-# neurons = [[16, 2], [16, 16, 2], [16, 16, 16, 2]]
-# for i, (rtol, atol, solver, neuron_layers) in enumerate(product(rtols, atols, solvers, neurons)):
-#     logger.info(
-#         f'Runnning job: time-embedding-mlp-neural-ode-{i} | Solver: {solver} | rtol: {rtol} | atol: {atol}')
-#     job = MoonsTimeEmbeddinngMLPNeuralODEJob(
-#         datamodule=datamodule,
-#         name=f'time-embedding-mlp-neural-ode-{i}',
-#         max_epochs=3,
-#         model=TimeEmbeddingMLPNeuralODEModel(
-#             input_shape=(2,),
-#             vector_field=dict(
-#                 input_dims=2,
-#                 time_embed_dims=2,
-#                 time_embed_freq=10,
-#                 neurons_per_layer=neuron_layers,
-#                 activations=['relu']*len(neuron_layers),
-#             ),
-#             atol=atol,
-#             rtol=rtol,
-#             solver=solver,
-#             max_epochs=100,
-#             monitor='val_loss',
-#             mode='min',
-#             min_delta=1e-3,
-#             patience=5,
-#             verbose=False,
-#         ),
-#     )
-#     job.run()
+rtols = np.logspace(-2, -7, 10)
+atols = np.logspace(-2, -7, 10)
+solvers = ['euler', 'dopri5', 'rk4']
+neurons = [[16, 2], [16, 16, 2], [16, 16, 16, 2]]
+for i, (rtol, atol, solver, neuron_layers) in enumerate(product(rtols, atols, solvers, neurons)):
+    logger.info(
+        f'Runnning job: time-embedding-mlp-neural-ode-{i} | Solver: {solver} | rtol: {rtol} | atol: {atol}')
+    job = MoonsTimeEmbeddinngMLPNeuralODEJob(
+        datamodule=datamodule,
+        name=f'time-embedding-mlp-neural-ode-{i}',
+        max_epochs=3,
+        model=TimeEmbeddingMLPNeuralODEModel(
+            input_shape=(2,),
+            vector_field=dict(
+                input_dims=2,
+                time_embed_dims=2,
+                time_embed_freq=10,
+                neurons_per_layer=neuron_layers,
+                activations=['relu']*len(neuron_layers),
+            ),
+            atol=atol,
+            rtol=rtol,
+            solver=solver,
+            max_epochs=100,
+            monitor='val_loss',
+            mode='min',
+            min_delta=1e-3,
+            patience=5,
+            verbose=False,
+        ),
+    )
+    job.run()
 
 
 mlflow.set_experiment('Moons Real NVP')
@@ -90,10 +90,17 @@ for i, (neurons, activation) in enumerate(product(neuron_options, activation_opt
             features=2,
             transforms=4,
             hidden_features=neurons,
-            monitor='val_loss',
-            mode='min',
-            patience=5,
-            min_delta=1e-3,
+            checkpoint=dict(
+                monitor='val_loss',
+                mode='min',
+            ),
+            early_stopping=dict(
+                monitor='val_loss',
+                mode='min',
+                patience=5,
+                min_delta=1e-3
+            ),
+            learning_rate=1e-3,
             max_epochs=50,
             activation=activation
         )

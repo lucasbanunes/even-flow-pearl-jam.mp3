@@ -1,0 +1,10 @@
+datamodule:
+  batch_size: 32
+  train_samples: 10000
+  val_samples: 1000
+  test_samples: 1000
+model:
+  features: 2
+  hidden_features: [64, 64]
+  activation: relu
+  max_epochs: 3

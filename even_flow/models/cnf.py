@@ -5,10 +5,11 @@ import shutil
 from datetime import datetime, timezone
 from pydantic import Field, PrivateAttr
 import torch
-from torch import nn
+from torch import mode, nn
 from torchdiffeq import odeint, odeint_adjoint
 from torchmetrics import MeanMetric, MetricCollection
 import mlflow
+from mlflow.entities import Run
 import lightning as L
 import json
 from lightning.pytorch.loggers import MLFlowLogger
@@ -16,9 +17,10 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from lightning.pytorch.profilers import AdvancedProfiler, SimpleProfiler
 from mlflow.models.model import ModelInfo
-
+from zuko.flows.continuous import CNF as ZukoCNF
 
 from .mlp import TimeEmbeddingMLPConfig
+from .real_nvp import ActivationType, HiddenFeaturesType
 from ..mlflow import tmp_artifact_download, MLFlowLoggedClass
 from .lightning import (
     CheckpointsDirType,
@@ -29,9 +31,11 @@ from .lightning import (
     LearningRateType,
     MetricModeType,
     MonitorType,
+    LightningModel,
 )
 from ..pydantic import MLFlowLoggedModel
 from ..utils import get_logger
+from ..torch import TORCH_MODULES
 
 
 type AdjointType = Annotated[
@@ -183,7 +187,7 @@ class CNF(L.LightningModule):
     def log_prob(self, z0: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         zf, div_int = self.forward(z0)
         logp_zf = self.base_distribution.log_prob(zf).reshape(-1, 1)
-        return zf, div_int, logp_zf + div_int
+        return zf, div_int, logp_zf - div_int
 
     def training_step(self,
                       batch: tuple[torch.Tensor],
@@ -385,7 +389,8 @@ class CNFModel(MLFlowLoggedModel):
                                                                         cls.model_fields['num_sanity_val_steps'].default))
         kwargs['min_delta'] = float(mlflow_run.data.params.get(f'{formated_prefix}min_delta',
                                                                cls.model_fields['min_delta'].default))
-        kwargs['input_shape'] = json.loads(mlflow_run.data.params[f'{formated_prefix}input_shape'])
+        kwargs['input_shape'] = json.loads(
+            mlflow_run.data.params[f'{formated_prefix}input_shape'])
         vector_field_type: Type[MLFlowLoggedClass] = cls.model_fields['vector_field'].annotation
         kwargs['vector_field'] = vector_field_type.from_mlflow(
             mlflow_run,
@@ -447,7 +452,8 @@ class CNFModel(MLFlowLoggedModel):
                     monitor=self.monitor,
                     patience=self.patience,
                     mode=self.mode,
-                    min_delta=self.min_delta
+                    min_delta=self.min_delta,
+                    stopping_threshold=-100
                 ),
                 checkpoint,
             ]
@@ -552,3 +558,176 @@ class CNFHutchingsonModel(CNFModel):
 
 class TimeEmbeddingMLPCNFHutchinsonModel(CNFHutchingsonModel):
     vector_field: TimeEmbeddingMLPConfig
+
+
+class ZukoLightningModule(L.LightningModule):
+    def __init__(self,
+                 model_config: 'ZukoCNFModel'):
+        super().__init__()
+        self.save_hyperparameters(logger=False)
+
+        self.model: nn.Module = ZukoCNF(
+            features=model_config.features,
+            context=model_config.context,
+            freqs=model_config.freqs,
+            exact=model_config.exact,
+            atol=model_config.atol,
+            rtol=model_config.rtol,
+            hidden_features=model_config.hidden_features,
+            activation=TORCH_MODULES[model_config.activation],
+        )
+        self.learning_rate = model_config.learning_rate
+
+        self.train_metrics = MetricCollection({
+            'loss': MeanMetric()
+        })
+        self.val_metrics = self.train_metrics.clone()
+        self.test_metrics = self.val_metrics.clone()
+
+    def forward(self, x: torch.Tensor, context: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.model(context).log_prob(x).reshape(-1, 1)
+
+    def training_step(self, batch, batch_idx):
+        log_prob = self.forward(batch[0])
+        loss = -log_prob.mean()
+        self.train_metrics.update(loss)
+        self.log("train_loss", loss, on_epoch=True, prog_bar=True)
+        return loss
+
+    def on_train_epoch_end(self):
+        # Reset metrics after each epoch
+        self.train_metrics.reset()
+
+    def validation_step(self, batch, batch_idx):
+        log_prob = self.forward(batch[0])
+        loss = -log_prob.mean()
+        self.val_metrics.update(loss)
+        self.log("val_loss", loss, on_epoch=True, prog_bar=True)
+        return loss
+
+    def on_validation_epoch_end(self):
+        metric_values = self.val_metrics.compute()
+        for name, value in metric_values.items():
+            self.log(f"val_{name}", value, prog_bar=True)
+        # Reset metrics after each epoch
+        self.val_metrics.reset()
+
+    def test_step(self, batch, batch_idx):
+        log_prob = self.forward(batch[0])
+        loss = -log_prob.mean()
+        self.test_metrics.update(loss)
+        self.log("test_loss", loss, on_epoch=True, prog_bar=True)
+        return loss
+
+    def on_test_epoch_end(self):
+        metric_values = self.test_metrics.compute()
+        for name, value in metric_values.items():
+            self.log(f"test_{name}", value, prog_bar=True)
+        # Reset metrics after each epoch
+        self.test_metrics.reset()
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(
+            self.parameters(),
+            lr=self.learning_rate
+        )
+        return optimizer
+
+    def reset_metrics(self):
+        self.train_metrics.reset()
+        self.val_metrics.reset()
+        self.test_metrics.reset()
+
+    def get_test_metrics(self) -> dict[str, float]:
+        return self.test_metrics.compute()
+
+    def get_val_metrics(self) -> dict[str, float]:
+        return self.val_metrics.compute()
+
+    def get_train_metrics(self) -> dict[str, float]:
+        return self.train_metrics.compute()
+
+
+class ZukoCNFModel(LightningModel):
+    LIGHTNING_MODULE_ARTIFACT_PATH: ClassVar[str] = 'cnf.ckpt'
+    LIGHTNING_MODULE_TYPE: ClassVar[Type[L.LightningModule]
+                                    ] = ZukoLightningModule
+
+    features: int
+    context: int = 0
+    freqs: int = 3
+    atol: AtolType = 1e-5
+    rtol: RtolType = 1e-5
+    exact: bool = True
+    learning_rate: LearningRateType = 1e-3
+    hidden_features: HiddenFeaturesType
+    activation: ActivationType | None = None
+
+    _lightning_module: Annotated[
+        ZukoLightningModule | None,
+        PrivateAttr()
+    ] = None
+
+    def get_dist(self, context=None):
+        return self._lightning_module.model(context)
+
+    def _to_mlflow(self, prefix=''):
+        super()._to_mlflow(prefix=prefix)
+        if prefix:
+            prefix += '.'
+        mlflow.log_param(f"{prefix}features", self.features)
+        mlflow.log_param(f"{prefix}context", self.context)
+        mlflow.log_param(f"{prefix}freqs", self.freqs)
+        mlflow.log_param(f"{prefix}atol", self.atol)
+        mlflow.log_param(f"{prefix}rtol", self.rtol)
+        mlflow.log_param(f"{prefix}exact", self.exact)
+        mlflow.log_param(f"{prefix}learning_rate", self.learning_rate)
+        mlflow.log_param(f"{prefix}hidden_features",
+                         json.dumps(self.hidden_features))
+        mlflow.log_param(f"{prefix}activation", self.activation)
+
+    @classmethod
+    def from_mlflow(cls,
+                    mlflow_run: Run,
+                    prefix='', **kwargs):
+        kwargs = super().from_mlflow(mlflow_run, prefix=prefix, **kwargs)
+        if prefix:
+            prefix += '.'
+        kwargs['features'] = int(
+            mlflow_run.data.params[f'{prefix}features'])
+        kwargs['context'] = int(
+            mlflow_run.data.params.get(f'{prefix}context',
+                                       cls.model_fields['context'].default))
+        kwargs['freqs'] = int(
+            mlflow_run.data.params.get(f'{prefix}freqs',
+                                       cls.model_fields['freqs'].default))
+        kwargs['atol'] = float(
+            mlflow_run.data.params.get(f'{prefix}atol',
+                                       cls.model_fields['atol'].default))
+        kwargs['rtol'] = float(
+            mlflow_run.data.params.get(f'{prefix}rtol',
+                                       cls.model_fields['rtol'].default))
+        kwargs['exact'] = mlflow_run.data.params.get(f'{prefix}exact',
+                                                     cls.model_fields['exact'].default)
+        kwargs['exact'] = kwargs['exact'] in ['True', 'true', True]
+        kwargs['learning_rate'] = float(
+            mlflow_run.data.params.get(f'{prefix}learning_rate',
+                                       cls.model_fields['learning_rate'].default))
+        hidden_features_str = mlflow_run.data.params[f'{prefix}hidden_features']
+        kwargs['hidden_features'] = json.loads(hidden_features_str)
+        activation_str = mlflow_run.data.params.get(
+            f'{prefix}activation', cls.model_fields['activation'].default
+        )
+        kwargs['activation'] = activation_str if activation_str != 'None' else None
+        instance = cls(**kwargs)
+        return instance
+
+    @torch.no_grad()
+    def sample(self, shape: tuple[int]) -> torch.Tensor:
+        normalizing_flow = self.lightning_module.model(context=None)
+        if normalizing_flow.base.has_rsample:
+            zf = normalizing_flow.base.rsample(shape)
+        else:
+            zf = normalizing_flow.base.sample(shape)
+        z0, _ = normalizing_flow.inverse(zf)
+        return zf, z0

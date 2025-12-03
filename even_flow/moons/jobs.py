@@ -21,7 +21,8 @@ from ..pydantic import YamlBaseModel
 from ..mlflow import MLFlowLoggedClass, load_json
 from ..models.cnf import (
     TimeEmbeddingMLPCNFModel,
-    TimeEmbeddingMLPCNFHutchinsonModel
+    TimeEmbeddingMLPCNFHutchinsonModel,
+    ZukoCNFModel
 )
 from ..models.real_nvp import RealNVPModel
 from ..models.neuralode import TimeEmbeddingMLPNeuralODEModel
@@ -269,3 +270,22 @@ class MoonsTimeEmbeddinngMLPNeuralODEJob(BaseMoonsJob):
             cmap=cmap
         )
         return ax
+
+
+class MoonsZukoCNFJob(BaseMoonsJob):
+
+    model_config = ConfigDict(arbitrary_types_allowed=True,
+                              extra='forbid')
+
+    DATAMODULE_PREFIX: ClassVar[str] = 'datamodule'
+    METRICS_ARTIFACT_PATH: ClassVar[str] = 'metrics.json'
+    MODEL_PREFIX: ClassVar[str] = 'model'
+
+    model: ZukoCNFModel
+    datamodule: Annotated[
+        MoonsDataset,
+        BeforeValidator(MoonsDataset.pydantic_before_validator),
+        PlainSerializer(MoonsDataset.pydantic_plain_serializer)
+    ] = MoonsDataset()
+    metrics: dict[str, dict[str, float | int]
+                  ] = DEFAULT_TRAINING_JOB_METRICS.copy()
