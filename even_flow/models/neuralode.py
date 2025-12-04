@@ -1,7 +1,7 @@
 from typing import Annotated, ClassVar, Type, Literal
 
 import mlflow
-from pydantic import Field, PrivateAttr
+from pydantic import Field
 import torch
 from torchdiffeq import odeint, odeint_adjoint
 import lightning as L
@@ -171,7 +171,6 @@ class NeuralODEModule(L.LightningModule):
         log_prob = self.forward(batch[0])
         loss = -log_prob.mean()
         self.test_metrics.update(loss)
-        self.log("test_loss", loss, on_epoch=True, prog_bar=True)
         return loss
 
     def on_test_epoch_end(self):
@@ -222,16 +221,19 @@ class NeuralODEModel(LightningModel):
     rtol: RToleranceType = 1e-6
     input_shape: tuple[int, ...]
 
-    _lightning_module: Annotated[
+    lightning_module: Annotated[
         NeuralODEModule | None,
-        PrivateAttr()
+        Field(description="The Lightning module instance.")
     ] = None
+
+    def get_new_lightning_module(self):
+        return NeuralODEModule(self)
 
     def _to_mlflow(self, prefix=''):
         super()._to_mlflow(prefix=prefix)
         if prefix:
             prefix += '.'
-        self.vector_field._to_mlflow(prefix=prefix + 'vector_field')
+        self.vector_field.to_mlflow(prefix=prefix + 'vector_field')
         mlflow.log_param(
             f"{prefix}base_distribution",
             self.base_distribution
@@ -266,10 +268,10 @@ class NeuralODEModel(LightningModel):
         )
 
     @classmethod
-    def from_mlflow(cls,
-                    mlflow_run: Run,
-                    prefix='', **kwargs):
-        kwargs = super().from_mlflow(mlflow_run, prefix=prefix, **kwargs)
+    def _from_mlflow(cls,
+                     mlflow_run: Run,
+                     prefix='', **kwargs):
+        kwargs = super()._from_mlflow(mlflow_run, prefix=prefix, **kwargs)
         if prefix:
             prefix += '.'
         model_type: Type[MLFlowLoggedModel] = cls.model_fields['vector_field'].annotation

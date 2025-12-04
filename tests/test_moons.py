@@ -2,6 +2,7 @@ import logging
 import subprocess
 from pathlib import Path
 import mlflow
+import torch
 from even_flow.moons.cli import (
     time_embedding_mlp_neural_ode,
     time_embedding_mlp_cnf,
@@ -26,8 +27,8 @@ def test_time_embedding_mlp_neural_ode(data_dir: Path):
         MoonsTimeEmbeddinngMLPNeuralODEJob.from_mlflow_run_id(
             job.id_
         )
-    job_dict = job.model_dump()
-    loaded_job_dict = loaded_job.model_dump()
+    job_dict = job.model_dump(exclude='model.lightning_module')
+    loaded_job_dict = loaded_job.model_dump(exclude='model.lightning_module')
     logging.info(f"Original job: {job_dict}")
     logging.info(f"Loaded job: {loaded_job_dict}")
     assert job_dict == loaded_job_dict, "The loaded job does not match the original job."
@@ -132,13 +133,18 @@ def test_real_nvp(data_dir: Path):
     loaded_job = MoonsRealNVPJob.from_mlflow_run_id(
         job.id_
     )
-    job_dict = job.model_dump()
-    loaded_job_dict = loaded_job.model_dump()
+    job_dict = job.model_dump(exclude='model.lightning_module')
+    loaded_job_dict = loaded_job.model_dump(exclude='model.lightning_module')
     logging.info(f"Original job: {job_dict}")
     logging.info(f"Loaded job: {loaded_job_dict}")
     assert job_dict == loaded_job_dict, "The loaded job does not match the original job."
     # Ensures that the Lightning module is loaded properly.
-    loaded_job.model.lightning_module
+    assert loaded_job.model.lightning_module is not None, "The Lightning module was not loaded properly."
+
+    base, transformed = loaded_job.model.sample(shape=(10,))
+    assert base.shape == (10, 2), "Sample shape is incorrect."
+    assert transformed.shape == (10, 2), "Transformed shape is incorrect."
+    assert not torch.allclose(base, transformed), "Base distribution and transformed distribution should not be the same."
 
 
 def test_cli_real_nvp(data_dir: Path):
@@ -168,8 +174,8 @@ def test_zuko_cnf(data_dir: Path):
     loaded_job = MoonsZukoCNFJob.from_mlflow_run_id(
         job.id_
     )
-    job_dict = job.model_dump()
-    loaded_job_dict = loaded_job.model_dump()
+    job_dict = job.model_dump(exclude='model.lightning_module')
+    loaded_job_dict = loaded_job.model_dump(exclude='model.lightning_module')
     logging.info(f"Original job: {job_dict}")
     logging.info(f"Loaded job: {loaded_job_dict}")
     assert job_dict == loaded_job_dict, "The loaded job does not match the original job."

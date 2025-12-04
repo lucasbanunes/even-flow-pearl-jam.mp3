@@ -179,7 +179,7 @@ class MoonsDataset(L.LightningDataModule, MLFlowLoggedClass):
             "random_state": v.random_state,
         }
 
-    def to_mlflow(self, prefix: str = "") -> dict[str, Any]:
+    def _to_mlflow(self, prefix: str = "") -> dict[str, Any]:
         """Log dataset parameters to MLflow."""
         if prefix:
             prefix += "."
@@ -193,7 +193,7 @@ class MoonsDataset(L.LightningDataModule, MLFlowLoggedClass):
         })
 
     @classmethod
-    def from_mlflow(cls, mlflow_run: Run, prefix: str = "") -> Self:
+    def _from_mlflow(cls, mlflow_run: Run, prefix: str = "") -> Self:
         """Create an instance from MLflow logged parameters."""
         if prefix:
             prefix += "."

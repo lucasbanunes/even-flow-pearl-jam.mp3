@@ -206,7 +206,7 @@ class TimeEmbeddingMLPConfig(MLFlowLoggedModel):
         )
 
     @classmethod
-    def from_mlflow(cls, mlflow_run, prefix=''):
+    def _from_mlflow(cls, mlflow_run, prefix=''):
         if prefix:
             prefix = prefix.replace('.', '_') + '_'
         artifact_name = f'{prefix}{cls.JSON_ARTIFACT_PATH}'

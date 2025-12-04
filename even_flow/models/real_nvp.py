@@ -1,5 +1,5 @@
 from typing import Annotated, ClassVar, Type
-from pydantic import Field, PrivateAttr
+from pydantic import Field
 import torch
 from zuko.flows import RealNVP
 import lightning as L
@@ -32,7 +32,7 @@ type ActivationType = Annotated[
 
 
 class RealNVPModule(L.LightningModule):
-    def __init__(self, model_config: RealNVP):
+    def __init__(self, model_config: 'RealNVPModel'):
         super().__init__()
         self.save_hyperparameters(logger=False)
 
@@ -85,7 +85,7 @@ class RealNVPModule(L.LightningModule):
         log_prob = self.forward(batch[0])
         loss = -log_prob.mean()
         self.test_metrics.update(loss)
-        self.log("test_loss", loss, on_epoch=True, prog_bar=True)
+        # self.log("test_loss", loss, on_epoch=True, prog_bar=True)
         return loss
 
     def on_test_epoch_end(self):
@@ -131,13 +131,18 @@ class RealNVPModel(LightningModel):
     hidden_features: HiddenFeaturesType
     activation: ActivationType | None = None
 
-    _lightning_module: Annotated[
+    lightning_module: Annotated[
         RealNVPModule | None,
-        PrivateAttr()
+        Field(
+            description="The Lightning module associated with the model.",
+        )
     ] = None
 
+    def get_new_lightning_module(self):
+        return RealNVPModule(model_config=self)
+
     def get_dist(self, context=None):
-        return self._lightning_module.model(context)
+        return self.lightning_module.model(context)
 
     def _to_mlflow(self, prefix=''):
         super()._to_mlflow(prefix=prefix)
@@ -148,14 +153,15 @@ class RealNVPModel(LightningModel):
         mlflow.log_param(f"{prefix}transforms", self.transforms)
         mlflow.log_param(f"{prefix}randmask", self.randmask)
         mlflow.log_param(f"{prefix}learning_rate", self.learning_rate)
-        mlflow.log_param(f"{prefix}hidden_features", json.dumps(self.hidden_features))
+        mlflow.log_param(f"{prefix}hidden_features",
+                         json.dumps(self.hidden_features))
         mlflow.log_param(f"{prefix}activation", self.activation)
 
     @classmethod
-    def from_mlflow(cls,
-                    mlflow_run: Run,
-                    prefix='', **kwargs):
-        kwargs = super().from_mlflow(mlflow_run, prefix=prefix, **kwargs)
+    def _from_mlflow(cls,
+                     mlflow_run: Run,
+                     prefix='', **kwargs):
+        kwargs = super()._from_mlflow(mlflow_run, prefix=prefix, **kwargs)
         if prefix:
             prefix += '.'
         kwargs['features'] = int(

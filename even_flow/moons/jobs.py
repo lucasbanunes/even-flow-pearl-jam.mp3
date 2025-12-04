@@ -119,7 +119,7 @@ class BaseMoonsJob(BaseJob, YamlBaseModel):
         self.log_metrics(tmp_dir, model_info)
 
     @classmethod
-    def from_mlflow(cls, mlflow_run: Run, prefix: str = '') -> Self:
+    def _from_mlflow(cls, mlflow_run: Run, prefix: str = '') -> Self:
         if prefix:
             prefix += "."
         metrics = load_json(mlflow_run.info.run_id,

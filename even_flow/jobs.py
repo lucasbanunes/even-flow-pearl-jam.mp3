@@ -9,6 +9,7 @@ import mlflow
 from typer import Option
 import pandas as pd
 import numpy as np
+from mlflow.entities import Run
 
 from .utils import get_logger
 
@@ -86,10 +87,18 @@ class BaseJob(BaseModel, ABC):
 
     @classmethod
     @abstractmethod
-    def from_mlflow(cls, mlflow_run: mlflow.entities.Run,
-                    prefix: str = '') -> Self:
+    def _from_mlflow(cls, mlflow_run: Run,
+                     prefix: str = '') -> Self:
         raise NotImplementedError(
             "from_mlflow method must be implemented by subclasses.")
+
+    @classmethod
+    def from_mlflow(cls, mlflow_run: Run,
+                    prefix: str = '') -> Self:
+        instance = cls._from_mlflow(mlflow_run, prefix=prefix)
+        instance.id_ = mlflow_run.info.run_id
+        instance.name = mlflow_run.data.tags.get('mlflow.runName', None)
+        return instance
 
     @classmethod
     def from_mlflow_run_id(cls, run_id: str, prefix: str = '') -> Self:
@@ -98,13 +107,13 @@ class BaseJob(BaseModel, ABC):
         instance = cls.from_mlflow(mlflow_run, prefix=prefix)
         instance.id_ = run_id
         instance.name = mlflow_run.data.tags.get('mlflow.runName', None)
-        # instance.mlflow_run = mlflow_run
         return instance
 
     def get_metric_history(self,
                            metrics: list[str]) -> pd.DataFrame:
         mlflow_client = mlflow.MlflowClient()
-        metric_history = defaultdict(lambda: np.full(len(metrics) + 1, np.nan).tolist())
+        metric_history = defaultdict(
+            lambda: np.full(len(metrics) + 1, np.nan).tolist())
         for i, metric in enumerate(metrics):
             history = mlflow_client.get_metric_history(
                 run_id=self.id_,
@@ -113,5 +122,6 @@ class BaseJob(BaseModel, ABC):
             for metric in history:
                 metric_history[metric.step][i] = metric.value
                 metric_history[metric.step][-1] = metric.step
-        data = pd.DataFrame.from_dict(metric_history, orient='index', columns=metrics + ['step'])
+        data = pd.DataFrame.from_dict(
+            metric_history, orient='index', columns=metrics + ['step'])
         return data

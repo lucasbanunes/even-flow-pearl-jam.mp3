@@ -1,5 +1,5 @@
 from typing import Annotated, Any, Literal, ClassVar, Self, Type
-from pydantic import Field, PrivateAttr
+from pydantic import Field
 from pathlib import Path
 import shutil
 from datetime import datetime, timezone
@@ -15,6 +15,7 @@ from lightning.pytorch.profilers import AdvancedProfiler, SimpleProfiler
 import mlflow
 from mlflow.entities import Run
 from mlflow.models.model import ModelInfo
+from abc import abstractmethod
 
 from ..utils import get_logger
 from ..pydantic import MLFlowLoggedModel
@@ -119,9 +120,8 @@ class ModelCheckpointConfig(MLFlowLoggedModel):
         mlflow.log_param(f"{prefix}filename", self.filename)
 
     @classmethod
-    def from_mlflow(cls, mlflow_run: Run,
-                    prefix: str = '') -> 'ModelCheckpointConfig':
-        kwargs = {}
+    def _from_mlflow(cls, mlflow_run: Run,
+                     prefix: str = '', **kwargs) -> 'ModelCheckpointConfig':
         if prefix:
             prefix += '.'
         params = mlflow_run.data.params
@@ -157,35 +157,40 @@ class EarlyStoppingConfig(MLFlowLoggedModel):
         )
 
     def _to_mlflow(self, prefix: str = '') -> None:
-        if prefix:
-            prefix += '.'
         mlflow.log_param(f"{prefix}.monitor", self.monitor)
         mlflow.log_param(f"{prefix}.patience", self.patience)
         mlflow.log_param(f"{prefix}.min_delta", self.min_delta)
         mlflow.log_param(f"{prefix}.mode", self.mode)
-        mlflow.log_param(f"{prefix}stopping_threshold",
+        mlflow.log_param(f"{prefix}.stopping_threshold",
                          self.stopping_threshold)
 
     @classmethod
-    def from_mlflow(cls, mlflow_run: Run,
-                    prefix: str = '') -> 'EarlyStoppingConfig':
+    def _from_mlflow(cls, mlflow_run: Run,
+                     prefix: str = '') -> 'EarlyStoppingConfig':
         kwargs = {}
-        if prefix:
-            prefix += '.'
         params = mlflow_run.data.params
-        kwargs['monitor'] = params.get(f"{prefix}monitor",
+        kwargs['monitor'] = params.get(f"{prefix}.monitor",
                                        cls.model_fields['monitor'].default)
-        kwargs['patience'] = int(params.get(f"{prefix}patience",
+        kwargs['patience'] = int(params.get(f"{prefix}.patience",
                                             cls.model_fields['patience'].default))
-        kwargs['min_delta'] = float(params.get(f"{prefix}min_delta",
+        kwargs['min_delta'] = float(params.get(f"{prefix}.min_delta",
                                                cls.model_fields['min_delta'].default))
-        kwargs['mode'] = params.get(f"{prefix}mode",
+        kwargs['mode'] = params.get(f"{prefix}.mode",
                                     cls.model_fields['mode'].default)
-        kwargs['stopping_threshold'] = params.get(f"{prefix}stopping_threshold",
+        kwargs['stopping_threshold'] = params.get(f"{prefix}.stopping_threshold",
                                                   cls.model_fields['stopping_threshold'].default)
         if kwargs['stopping_threshold'] == 'None':
             kwargs['stopping_threshold'] = None
         return cls(**kwargs)
+
+
+def get_lightning_module_artifact_name(suffix: str, prefix='') -> str:
+    if prefix and prefix.endswith('.'):
+        prefix = prefix.replace('.', '_')
+    elif prefix:
+        prefix = prefix.replace('.', '_') + '_'
+    artifact_name = f'{prefix}{suffix}'
+    return artifact_name
 
 
 class LightningModel(MLFlowLoggedModel):
@@ -204,36 +209,24 @@ class LightningModel(MLFlowLoggedModel):
     checkpoint: ModelCheckpointConfig = ModelCheckpointConfig()
     early_stopping: EarlyStoppingConfig = EarlyStoppingConfig()
 
-    _lightning_module: Annotated[
+    lightning_module: Annotated[
         L.LightningModule | None,
-        PrivateAttr()
+        Field(
+            description="The Lightning module associated with the model."
+        )
     ] = None
 
-    @property
-    def lightning_module(self):
-        if self._lightning_module is not None:
-            return self._lightning_module
-
-        if self.id_:
-            logger = get_logger()
-            logger.debug('Loading Lightning module from checkpoint...')
-            self._lightning_module = self.load_lightning_module_from_checkpoint()
-            return self._lightning_module
-
-        self._lightning_module = self.LIGHTNING_MODULE_TYPE(
-            model_config=self)
-        return self._lightning_module
-
-    def model_post_init(self, context):
-        if self._lightning_module is None:
-            self._lightning_module = self.LIGHTNING_MODULE_TYPE(
-                model_config=self)
+    @abstractmethod
+    def get_new_lightning_module(self) -> L.LightningModule:
+        raise NotImplementedError()
 
     def fit(self,
             datamodule: L.LightningDataModule,
             prefix: str = '') -> tuple[L.Trainer, ModelInfo]:
         logger = get_logger()
         logger.debug('Creating trainer...')
+        if self.lightning_module is None:
+            self.lightning_module = self.get_new_lightning_module()
         lightning_mlflow_logger = self.get_mlflow_logger()
 
         callbacks = []
@@ -280,8 +273,7 @@ class LightningModel(MLFlowLoggedModel):
             mlflow.log_artifact(str(profiler_dir / fit_profiler_filename))
             self._lightning_module = self.LIGHTNING_MODULE_TYPE.load_from_checkpoint(
                 checkpoint.best_model_path)
-            checkpoint_temp_path = Path(
-                tmp_dir) / self.get_lightning_module_artifact_name(prefix)
+            checkpoint_temp_path = Path(tmp_dir) / get_lightning_module_artifact_name(self.LIGHTNING_MODULE_ARTIFACT_PATH, prefix)
             shutil.copy(checkpoint.best_model_path, checkpoint_temp_path)
             mlflow.log_artifact(str(checkpoint_temp_path))
             model_info = mlflow.pytorch.log_model(
@@ -312,14 +304,6 @@ class LightningModel(MLFlowLoggedModel):
         else:
             raise ValueError(f"Unsupported profiler: {self.profiler}")
 
-    def get_lightning_module_artifact_name(self, prefix='') -> str:
-        if prefix and prefix.endswith('.'):
-            prefix = prefix.replace('.', '_')
-        elif prefix:
-            prefix = prefix.replace('.', '_') + '_'
-        artifact_name = f'{prefix}{self.LIGHTNING_MODULE_ARTIFACT_PATH}'
-        return artifact_name
-
     def evaluate(self,
                  dataloader: torch.utils.data.DataLoader) -> dict[str, Any]:
         # Using trainer.test doesn´t allow computing the internal
@@ -340,11 +324,11 @@ class LightningModel(MLFlowLoggedModel):
         mlflow.log_param(f"{prefix}verbose", self.verbose)
         mlflow.log_param(f"{prefix}num_sanity_val_steps",
                          self.num_sanity_val_steps)
-        self.checkpoint._to_mlflow(prefix=prefix + 'checkpoint')
-        self.early_stopping._to_mlflow(prefix=prefix + 'early_stopping')
+        self.checkpoint.to_mlflow(prefix=prefix + 'checkpoint')
+        self.early_stopping.to_mlflow(prefix=prefix + 'early_stopping')
 
     @classmethod
-    def from_mlflow(cls, mlflow_run, prefix='', **kwargs):
+    def _from_mlflow(cls, mlflow_run, prefix='', **kwargs):
         if prefix:
             prefix += '.'
         kwargs['accelerator'] = mlflow_run.data.params.get(
@@ -369,12 +353,18 @@ class LightningModel(MLFlowLoggedModel):
         kwargs['early_stopping'] = EarlyStoppingConfig.from_mlflow(
             mlflow_run,
             prefix=prefix + 'early_stopping')
+        kwargs['lightning_module'] = cls.load_lightning_module_from_checkpoint(
+            run_id=mlflow_run.info.run_id,
+            prefix=prefix
+        )
         return kwargs
 
-    def load_lightning_module_from_checkpoint(self) -> Self:
+    @classmethod
+    def load_lightning_module_from_checkpoint(cls, run_id: str, prefix: str = '') -> Self:
         with tmp_artifact_download(
-            run_id=self.id_,
-            artifact_path=self.get_lightning_module_artifact_name(self.prefix)
+            run_id=run_id,
+            artifact_path=get_lightning_module_artifact_name(
+                cls.LIGHTNING_MODULE_ARTIFACT_PATH, prefix)
         ) as ckpt_path:
-            return self.LIGHTNING_MODULE_TYPE.load_from_checkpoint(
+            return cls.LIGHTNING_MODULE_TYPE.load_from_checkpoint(
                 ckpt_path)

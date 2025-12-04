@@ -2,6 +2,7 @@ from even_flow.utils import set_logger
 from even_flow.moons.jobs import (
     MoonsTimeEmbeddinngMLPNeuralODEJob,
     MoonsRealNVPJob,
+    MoonsZukoCNFJob,
     MoonsTimeEmbeddingMLPCNFJob,
     MoonsTimeEmbeddingMLPCNFHutchinsonJob
 )
@@ -10,7 +11,8 @@ from even_flow.models.neuralode import TimeEmbeddingMLPNeuralODEModel
 from even_flow.models.real_nvp import RealNVPModel
 from even_flow.models.cnf import (
     TimeEmbeddingMLPCNFModel,
-    TimeEmbeddingMLPCNFHutchinsonModel
+    TimeEmbeddingMLPCNFHutchinsonModel,
+    ZukoCNFModel
 )
 from itertools import product
 import mlflow
@@ -38,41 +40,38 @@ datamodule = MoonsDataset(
 )
 
 # mlflow.set_experiment("Moons Neural ODE")
-rtols = np.logspace(-2, -7, 10)
-atols = np.logspace(-2, -7, 10)
-solvers = ['euler', 'dopri5', 'rk4']
-neurons = [[16, 2], [16, 16, 2], [16, 16, 16, 2]]
-for i, (rtol, atol, solver, neuron_layers) in enumerate(product(rtols, atols, solvers, neurons)):
-    logger.info(
-        f'Runnning job: time-embedding-mlp-neural-ode-{i} | Solver: {solver} | rtol: {rtol} | atol: {atol}')
-    job = MoonsTimeEmbeddinngMLPNeuralODEJob(
-        datamodule=datamodule,
-        name=f'time-embedding-mlp-neural-ode-{i}',
-        max_epochs=3,
-        model=TimeEmbeddingMLPNeuralODEModel(
-            input_shape=(2,),
-            vector_field=dict(
-                input_dims=2,
-                time_embed_dims=2,
-                time_embed_freq=10,
-                neurons_per_layer=neuron_layers,
-                activations=['relu']*len(neuron_layers),
-            ),
-            atol=atol,
-            rtol=rtol,
-            solver=solver,
-            max_epochs=100,
-            monitor='val_loss',
-            mode='min',
-            min_delta=1e-3,
-            patience=5,
-            verbose=False,
-        ),
-    )
-    job.run()
-
-
-mlflow.set_experiment('Moons Real NVP')
+# rtols = np.logspace(-2, -7, 10)
+# atols = np.logspace(-2, -7, 10)
+# solvers = ['euler', 'dopri5', 'rk4']
+# neurons = [[16, 2], [16, 16, 2], [16, 16, 16, 2]]
+# for i, (rtol, atol, solver, neuron_layers) in enumerate(product(rtols, atols, solvers, neurons)):
+#     logger.info(
+#         f'Runnning job: time-embedding-mlp-neural-ode-{i} | Solver: {solver} | rtol: {rtol} | atol: {atol}')
+#     job = MoonsTimeEmbeddinngMLPNeuralODEJob(
+#         datamodule=datamodule,
+#         name=f'time-embedding-mlp-neural-ode-{i}',
+#         max_epochs=3,
+#         model=TimeEmbeddingMLPNeuralODEModel(
+#             input_shape=(2,),
+#             vector_field=dict(
+#                 input_dims=2,
+#                 time_embed_dims=2,
+#                 time_embed_freq=10,
+#                 neurons_per_layer=neuron_layers,
+#                 activations=['relu']*len(neuron_layers),
+#             ),
+#             atol=atol,
+#             rtol=rtol,
+#             solver=solver,
+#             max_epochs=100,
+#             monitor='val_loss',
+#             mode='min',
+#             min_delta=1e-3,
+#             patience=5,
+#             verbose=False,
+#         ),
+#     )
+#     job.run()
 
 neuron_options = [
     [64, 64],
@@ -80,6 +79,41 @@ neuron_options = [
     [256, 256]
 ]
 activation_options = ['gelu', 'tanh']
+max_epochs = 2
+
+
+mlflow.set_experiment('Moons Zuko Hutchinson CNF')
+
+for i, (neurons, activation) in enumerate(product(neuron_options, activation_options)):
+    logger.info(
+        f'Running job: zuko-hutchinson-cnf-moons-{i} | Hidden features: {neurons} | Activation: {activation}')
+    job = MoonsZukoCNFJob(
+        name=f'zuko-hutchinson-cnf-moons-{i}',
+        datamodule=datamodule,
+        model=ZukoCNFModel(
+            features=2,
+            hidden_features=neurons,
+            activation=activation,
+            exact=False,
+            max_epochs=max_epochs,
+            checkpoint=dict(
+                monitor='val_loss',
+                mode='min',
+            ),
+            early_stopping=dict(
+                monitor='val_loss',
+                mode='min',
+                patience=3,
+                min_delta=1e-2
+            ),
+        )
+    )
+    job.run()
+
+
+mlflow.set_experiment('Moons Real NVP')
+
+
 for i, (neurons, activation) in enumerate(product(neuron_options, activation_options)):
     logger.info(
         f'Running job: real-nvp-moons-{i} | Hidden features: {neurons} | Activation: {activation}')
@@ -101,8 +135,43 @@ for i, (neurons, activation) in enumerate(product(neuron_options, activation_opt
                 min_delta=1e-3
             ),
             learning_rate=1e-3,
-            max_epochs=50,
+            max_epochs=max_epochs,
             activation=activation
+        )
+    )
+    job.run()
+
+
+mlflow.set_experiment('Moons Zuko Exact CNF')
+
+neuron_options = [
+    [64, 64],
+    [64, 64, 64, 64],
+    [256, 256]
+]
+activation_options = ['gelu', 'tanh']
+for i, (neurons, activation) in enumerate(product(neuron_options, activation_options)):
+    logger.info(
+        f'Running job: zuko-exact-cnf-moons-{i} | Hidden features: {neurons} | Activation: {activation}')
+    job = MoonsZukoCNFJob(
+        name=f'zuko-exact-cnf-moons-{i}',
+        datamodule=datamodule,
+        model=ZukoCNFModel(
+            features=2,
+            hidden_features=neurons,
+            activation=activation,
+            exact=True,
+            max_epochs=max_epochs,
+            checkpoint=dict(
+                monitor='val_loss',
+                mode='min',
+            ),
+            early_stopping=dict(
+                monitor='val_loss',
+                mode='min',
+                patience=3,
+                min_delta=1e-2
+            ),
         )
     )
     job.run()

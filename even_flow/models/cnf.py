@@ -5,7 +5,7 @@ import shutil
 from datetime import datetime, timezone
 from pydantic import Field, PrivateAttr
 import torch
-from torch import mode, nn
+from torch import nn
 from torchdiffeq import odeint, odeint_adjoint
 from torchmetrics import MeanMetric, MetricCollection
 import mlflow
@@ -347,7 +347,7 @@ class CNFModel(MLFlowLoggedModel):
         mlflow.log_param(f'{prefix}input_shape', json.dumps(self.input_shape))
 
     @classmethod
-    def from_mlflow(cls, mlflow_run, prefix='', kwargs: dict = {}) -> dict[str, Any]:
+    def _from_mlflow(cls, mlflow_run, prefix='', kwargs: dict = {}) -> dict[str, Any]:
         formated_prefix = prefix
         if prefix:
             formated_prefix += '.'
@@ -547,20 +547,20 @@ class CNFHutchingsonModel(CNFModel):
             f'{formated_prefix}hutchingson_distribution', self.hutchingson_distribution)
 
     @classmethod
-    def from_mlflow(cls, mlflow_run, prefix='', kwargs={}):
+    def _from_mlflow(cls, mlflow_run, prefix='', kwargs={}):
         formated_prefix = prefix
         if prefix:
             formated_prefix += '.'
         kwargs['hutchingson_distribution'] = mlflow_run.data.params.get(f'{formated_prefix}hutchingson_distribution',
                                                                         cls.model_fields['hutchingson_distribution'].default)
-        return super().from_mlflow(mlflow_run, prefix, kwargs)
+        return super()._from_mlflow(mlflow_run, prefix, kwargs)
 
 
 class TimeEmbeddingMLPCNFHutchinsonModel(CNFHutchingsonModel):
     vector_field: TimeEmbeddingMLPConfig
 
 
-class ZukoLightningModule(L.LightningModule):
+class ZukoCNFLightningModule(L.LightningModule):
     def __init__(self,
                  model_config: 'ZukoCNFModel'):
         super().__init__()
@@ -616,7 +616,6 @@ class ZukoLightningModule(L.LightningModule):
         log_prob = self.forward(batch[0])
         loss = -log_prob.mean()
         self.test_metrics.update(loss)
-        self.log("test_loss", loss, on_epoch=True, prog_bar=True)
         return loss
 
     def on_test_epoch_end(self):
@@ -651,7 +650,7 @@ class ZukoLightningModule(L.LightningModule):
 class ZukoCNFModel(LightningModel):
     LIGHTNING_MODULE_ARTIFACT_PATH: ClassVar[str] = 'cnf.ckpt'
     LIGHTNING_MODULE_TYPE: ClassVar[Type[L.LightningModule]
-                                    ] = ZukoLightningModule
+                                    ] = ZukoCNFLightningModule
 
     features: int
     context: int = 0
@@ -663,13 +662,16 @@ class ZukoCNFModel(LightningModel):
     hidden_features: HiddenFeaturesType
     activation: ActivationType | None = None
 
-    _lightning_module: Annotated[
-        ZukoLightningModule | None,
-        PrivateAttr()
+    lightning_module: Annotated[
+        ZukoCNFLightningModule | None,
+        Field(description="The Lightning module instance.")
     ] = None
 
     def get_dist(self, context=None):
-        return self._lightning_module.model(context)
+        return self.lightning_module.model()
+
+    def get_new_lightning_module(self):
+        return ZukoCNFLightningModule(self)
 
     def _to_mlflow(self, prefix=''):
         super()._to_mlflow(prefix=prefix)
@@ -687,10 +689,10 @@ class ZukoCNFModel(LightningModel):
         mlflow.log_param(f"{prefix}activation", self.activation)
 
     @classmethod
-    def from_mlflow(cls,
-                    mlflow_run: Run,
-                    prefix='', **kwargs):
-        kwargs = super().from_mlflow(mlflow_run, prefix=prefix, **kwargs)
+    def _from_mlflow(cls,
+                     mlflow_run: Run,
+                     prefix='', **kwargs):
+        kwargs = super()._from_mlflow(mlflow_run, prefix=prefix, **kwargs)
         if prefix:
             prefix += '.'
         kwargs['features'] = int(
@@ -723,11 +725,11 @@ class ZukoCNFModel(LightningModel):
         return instance
 
     @torch.no_grad()
-    def sample(self, shape: tuple[int]) -> torch.Tensor:
-        normalizing_flow = self.lightning_module.model(context=None)
+    def sample(self, shape: tuple[int]) -> tuple[torch.Tensor, torch.Tensor]:
+        normalizing_flow = self.lightning_module.model()
         if normalizing_flow.base.has_rsample:
             zf = normalizing_flow.base.rsample(shape)
         else:
             zf = normalizing_flow.base.sample(shape)
-        z0, _ = normalizing_flow.inverse(zf)
+        z0 = normalizing_flow.transform.inv(zf)
         return zf, z0

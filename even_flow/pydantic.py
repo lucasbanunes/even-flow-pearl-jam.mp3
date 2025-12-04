@@ -65,22 +65,32 @@ class MLFlowLoggedModel(BaseModel, ABC):
 
     def to_mlflow(self, prefix: str = '') -> None:
         self._to_mlflow(prefix=prefix)
+        active_run = mlflow.active_run()
+        self.id_ = active_run.info.run_id
+        self.name = active_run.data.tags.get('mlflow.runName', None)
+        self.prefix = prefix
 
     @classmethod
     @abstractmethod
-    def from_mlflow(cls, mlflow_run: Run,
-                    prefix: str = '') -> Self:
+    def _from_mlflow(cls, mlflow_run: Run,
+                     prefix: str = '') -> Self:
         raise NotImplementedError(
             "from_mlflow method must be implemented by subclasses.")
+
+    @classmethod
+    def from_mlflow(cls, mlflow_run: Run,
+                    prefix: str = '') -> Self:
+        instance = cls._from_mlflow(mlflow_run, prefix=prefix)
+        instance.id_ = mlflow_run.info.run_id
+        instance.name = mlflow_run.data.tags.get('mlflow.runName', None)
+        instance.prefix = prefix
+        return instance
 
     @classmethod
     def from_mlflow_run_id(cls, run_id: str, prefix: str = '') -> Self:
         mlflow_client = mlflow.MlflowClient()
         mlflow_run = mlflow_client.get_run(run_id)
         instance = cls.from_mlflow(mlflow_run, prefix=prefix)
-        instance.id_ = run_id
-        instance.name = mlflow_run.data.tags.get('mlflow.runName', None)
-        instance.prefix = prefix
         return instance
 
 
