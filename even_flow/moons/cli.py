@@ -7,7 +7,8 @@ from .jobs import (
     MoonsTimeEmbeddingMLPCNFJob,
     MoonsTimeEmbeddingMLPCNFHutchinsonJob,
     MoonsRealNVPJob,
-    MoonsZukoCNFJob
+    MoonsZukoCNFJob,
+    MoonsTimeEmbeddingMLPCNFTorchJob
 )
 
 app = typer.Typer(
@@ -68,5 +69,15 @@ def zuko_cnf(
 ) -> MoonsZukoCNFJob:
     """Run a Moons Zuko CNF training job."""
     job = MoonsZukoCNFJob.from_yaml(config)
+    job.run()
+    return job
+
+
+@app.command()
+def time_embedding_mlp_cnf_torch(
+    config: ConfigType
+) -> MoonsTimeEmbeddingMLPCNFTorchJob:
+    """Run a Moons Time Embedding MLP CNF training job."""
+    job = MoonsTimeEmbeddingMLPCNFTorchJob.from_yaml(config)
     job.run()
     return job

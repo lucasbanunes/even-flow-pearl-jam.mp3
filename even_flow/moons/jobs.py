@@ -22,7 +22,8 @@ from ..mlflow import MLFlowLoggedClass, load_json
 from ..models.cnf import (
     TimeEmbeddingMLPCNFModel,
     TimeEmbeddingMLPCNFHutchinsonModel,
-    ZukoCNFModel
+    ZukoCNFModel,
+    TimeEmbeddingMLPCNFTorchModel
 )
 from ..models.real_nvp import RealNVPModel
 from ..models.neuralode import TimeEmbeddingMLPNeuralODEModel
@@ -67,8 +68,17 @@ class BaseMoonsJob(BaseJob, YamlBaseModel):
         logger.info('Fitting model...')
         fit_start = datetime.now(timezone.utc)
         mlflow.log_metric('fit_start', fit_start.timestamp())
-        _, model_info = self.model.fit(
+        fit_response = self.model.fit(
             self.datamodule, prefix=self.MODEL_PREFIX)
+        if isinstance(fit_response, ModelInfo):
+            model_info = fit_response
+        elif len(fit_response) == 1:
+            model_info = fit_response[0]
+        elif len(fit_response) == 2:
+            model_info = fit_response[1]
+        else:
+            raise ValueError(
+                'Unexpected fit response from model.fit() method.')
         fit_end = datetime.now(timezone.utc)
         mlflow.log_metric('fit_end', fit_end.timestamp())
         mlflow.log_metric(
@@ -282,6 +292,25 @@ class MoonsZukoCNFJob(BaseMoonsJob):
     MODEL_PREFIX: ClassVar[str] = 'model'
 
     model: ZukoCNFModel
+    datamodule: Annotated[
+        MoonsDataset,
+        BeforeValidator(MoonsDataset.pydantic_before_validator),
+        PlainSerializer(MoonsDataset.pydantic_plain_serializer)
+    ] = MoonsDataset()
+    metrics: dict[str, dict[str, float | int]
+                  ] = DEFAULT_TRAINING_JOB_METRICS.copy()
+
+
+class MoonsTimeEmbeddingMLPCNFTorchJob(BaseMoonsJob):
+
+    model_config = ConfigDict(arbitrary_types_allowed=True,
+                              extra='forbid')
+
+    DATAMODULE_PREFIX: ClassVar[str] = 'datamodule'
+    METRICS_ARTIFACT_PATH: ClassVar[str] = 'metrics.json'
+    MODEL_PREFIX: ClassVar[str] = 'model'
+
+    model: TimeEmbeddingMLPCNFTorchModel
     datamodule: Annotated[
         MoonsDataset,
         BeforeValidator(MoonsDataset.pydantic_before_validator),

@@ -1,5 +1,5 @@
 from typing import Annotated, Any, Literal, ClassVar, Self, Type
-from pydantic import Field
+from pydantic import Field, PrivateAttr
 from pathlib import Path
 import shutil
 from datetime import datetime, timezone
@@ -8,7 +8,7 @@ import torch
 import lightning as L
 from lightning.pytorch.callbacks import (
     ModelCheckpoint,
-    EarlyStopping
+    EarlyStopping as LightningEarlyStopping
 )
 from lightning.pytorch.loggers import MLFlowLogger
 from lightning.pytorch.profilers import AdvancedProfiler, SimpleProfiler
@@ -140,21 +140,76 @@ class ModelCheckpointConfig(MLFlowLoggedModel):
         return cls(**kwargs)
 
 
-class EarlyStoppingConfig(MLFlowLoggedModel):
+class EarlyStopping(MLFlowLoggedModel):
     monitor: MonitorType = 'val_loss'
     patience: PatienceType = 3
     min_delta: float = 1e-3
     mode: MetricModeType = 'min'
     stopping_threshold: float | None = None
 
-    def get(self) -> EarlyStopping:
-        return EarlyStopping(
+    _current_patience: Annotated[
+        int,
+        PrivateAttr()
+    ] = 0
+    _best: Annotated[
+        float | None,
+        PrivateAttr()
+    ] = None
+
+    def model_post_init(self, context):
+        super().model_post_init(context)
+
+        if self.mode == 'min':
+            self._best = float('inf')
+        else:  # mode == 'max'
+            self._best = float('-inf')
+
+    def as_lightning(self) -> LightningEarlyStopping:
+        return LightningEarlyStopping(
             monitor=self.monitor,
             patience=self.patience,
             min_delta=self.min_delta,
             mode=self.mode,
             stopping_threshold=self.stopping_threshold
         )
+
+    def should_stop(self, current: float) -> bool:
+        if self.mode == 'min':
+            return self.should_stop_min(current)
+        else:  # mode == 'max'
+            return self.should_stop_max(current)
+
+    def should_stop_min(self, current: float) -> bool:
+        if current <= self.stopping_threshold:
+            return True
+
+        diff = self._best - current
+        if diff >= self.min_delta:
+            self._best = current
+            self._current_patience = 0
+            return False
+        else:
+            self._current_patience += 1
+            if self._current_patience >= self.patience:
+                return True
+            else:
+                return False
+
+    def should_stop_max(self, current: float) -> bool:
+        if current >= self.stopping_threshold:
+            return True
+
+        diff = current - self._best
+        if diff >= self.min_delta:
+            self._best = current
+            self._current_patience = 0
+            return False
+        else:
+            self._current_patience += 1
+            if self._current_patience >= self.patience:
+                return True
+            else:
+                return False
 
     def _to_mlflow(self, prefix: str = '') -> None:
         mlflow.log_param(f"{prefix}.monitor", self.monitor)
@@ -166,7 +221,7 @@ class EarlyStoppingConfig(MLFlowLoggedModel):
 
     @classmethod
     def _from_mlflow(cls, mlflow_run: Run,
-                     prefix: str = '') -> 'EarlyStoppingConfig':
+                     prefix: str = '') -> 'EarlyStopping':
         kwargs = {}
         params = mlflow_run.data.params
         kwargs['monitor'] = params.get(f"{prefix}.monitor",
@@ -207,7 +262,7 @@ class LightningModel(MLFlowLoggedModel):
     num_sanity_val_steps: int = 5
 
     checkpoint: ModelCheckpointConfig = ModelCheckpointConfig()
-    early_stopping: EarlyStoppingConfig = EarlyStoppingConfig()
+    early_stopping: EarlyStopping = EarlyStopping()
 
     lightning_module: Annotated[
         L.LightningModule | None,
@@ -240,7 +295,7 @@ class LightningModel(MLFlowLoggedModel):
                 dirpath=checkpoints_dir
             )
             callbacks = [
-                self.early_stopping.get(),
+                self.early_stopping.as_lightning(),
                 checkpoint
             ]
             fit_profiler_filename = f'fit-{self.BASE_PROFILER_FILENAME}.txt'
@@ -273,7 +328,8 @@ class LightningModel(MLFlowLoggedModel):
             mlflow.log_artifact(str(profiler_dir / fit_profiler_filename))
             self._lightning_module = self.LIGHTNING_MODULE_TYPE.load_from_checkpoint(
                 checkpoint.best_model_path)
-            checkpoint_temp_path = Path(tmp_dir) / get_lightning_module_artifact_name(self.LIGHTNING_MODULE_ARTIFACT_PATH, prefix)
+            checkpoint_temp_path = Path(
+                tmp_dir) / get_lightning_module_artifact_name(self.LIGHTNING_MODULE_ARTIFACT_PATH, prefix)
             shutil.copy(checkpoint.best_model_path, checkpoint_temp_path)
             mlflow.log_artifact(str(checkpoint_temp_path))
             model_info = mlflow.pytorch.log_model(
@@ -350,7 +406,7 @@ class LightningModel(MLFlowLoggedModel):
         kwargs['checkpoint'] = ModelCheckpointConfig.from_mlflow(
             mlflow_run,
             prefix=prefix + 'checkpoint')
-        kwargs['early_stopping'] = EarlyStoppingConfig.from_mlflow(
+        kwargs['early_stopping'] = EarlyStopping.from_mlflow(
             mlflow_run,
             prefix=prefix + 'early_stopping')
         kwargs['lightning_module'] = cls.load_lightning_module_from_checkpoint(

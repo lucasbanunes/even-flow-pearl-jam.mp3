@@ -14,9 +14,7 @@ model:
       - 13
       - 2
     activations:
-      - tanh
-      - tanh
-      - linear
-  monitor: val_loss
-  mode: min
+      - gelu
+      - gelu
+      - gelu
   max_epochs: 3

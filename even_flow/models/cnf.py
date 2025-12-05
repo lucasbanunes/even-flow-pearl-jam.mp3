@@ -21,7 +21,7 @@ from zuko.flows.continuous import CNF as ZukoCNF
 
 from .mlp import TimeEmbeddingMLPConfig
 from .real_nvp import ActivationType, HiddenFeaturesType
-from ..mlflow import tmp_artifact_download, MLFlowLoggedClass
+from .torch import BaseNNModule, TorchModel
 from .lightning import (
     CheckpointsDirType,
     MaxEpochsType,
@@ -36,6 +36,7 @@ from .lightning import (
 from ..pydantic import MLFlowLoggedModel
 from ..utils import get_logger
 from ..torch import TORCH_MODULES
+from ..mlflow import tmp_artifact_download, MLFlowLoggedClass
 
 
 type AdjointType = Annotated[
@@ -733,3 +734,230 @@ class ZukoCNFModel(LightningModel):
             zf = normalizing_flow.base.sample(shape)
         z0 = normalizing_flow.transform.inv(zf)
         return zf, z0
+
+
+class CNFTorchModule(BaseNNModule):
+
+    def __init__(self,
+                 model_config: 'CNFTorchModel'):
+        super().__init__()
+
+        self.vector_field: nn.Module = model_config.vector_field.as_nn_module()
+        self.adjoint = model_config.adjoint
+        if self.adjoint:
+            self.odeint_func = odeint_adjoint
+        else:
+            self.odeint_func = odeint
+
+        self.input_shape = model_config.input_shape
+        self.sum_dims = tuple(range(1, len(self.input_shape)+1))
+        base_distribution = model_config.base_distribution
+        if base_distribution is None or base_distribution == 'standard_normal':
+            self.base_distribution = torch.distributions.MultivariateNormal(
+                loc=torch.zeros(self.input_shape),
+                covariance_matrix=torch.eye(self.input_shape[0])
+            )
+        elif base_distribution == 'uniform':
+            self.base_distribution = torch.distributions.Uniform(
+                low=-1.0, high=1.0)
+        else:
+            raise ValueError(
+                f"Unsupported base distribution: {base_distribution}")
+
+        integration_times = model_config.integration_times
+        if integration_times is None:
+            self.integration_times = torch.Tensor(
+                [0.0, 1.0]).float()
+        else:
+            self.integration_times = torch.Tensor(
+                integration_times).float()
+
+        self.solver = model_config.solver
+        self.atol = model_config.atol
+        self.rtol = model_config.rtol
+        self.learning_rate = model_config.learning_rate
+
+        self.train_metrics = MetricCollection({
+            'loss': MeanMetric()
+        })
+        self.val_metrics = self.train_metrics.clone()
+        self.test_metrics = self.val_metrics.clone()
+
+    def reset_metrics(self):
+        self.train_metrics.reset()
+        self.val_metrics.reset()
+        self.test_metrics.reset()
+        self.vector_field.reset_metrics()
+
+    def get_test_metrics(self) -> dict[str, Any]:
+        metrics = self.test_metrics.compute()
+        metrics['nfe'] = self.vector_field.nfe
+        return metrics
+
+    def forward(self, z0: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        # div0 = self.compute_divergence(self.integration_times[0],
+        #                                z0)
+        div0 = torch.zeros(z0.shape[0], 1, dtype=z0.dtype)
+
+        z, int_div = self.odeint_func(
+            self.augmented_function,
+            (z0, div0),
+            self.integration_times.type_as(z0),
+            method=self.solver,
+            atol=self.atol,
+            rtol=self.rtol
+        )
+        return z[-1], int_div[-1]
+
+    def augmented_function(self,
+                           t: torch.Tensor,
+                           state: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
+        z, _ = state
+        divergence = self.compute_divergence(t, z)
+
+        return z, divergence
+
+    @torch.enable_grad()
+    def compute_divergence(self,
+                           t: torch.Tensor,
+                           z: torch.Tensor) -> torch.Tensor:
+        z = z.clone().requires_grad_(True)
+        dzdt = self.vector_field.forward(t, z)
+        grad_outputs = torch.eye(
+            z.shape[-1], dtype=z.dtype, device=z.device)
+        grad_outputs = grad_outputs.expand(*z.shape, -1).movedim(-1, 0)
+        (jacobian,) = torch.autograd.grad(
+            dzdt, z,
+            grad_outputs=grad_outputs,
+            create_graph=True, is_grads_batched=True
+        )
+        divergence = torch.einsum("i...i", jacobian)
+
+        return divergence.reshape(-1, 1)
+
+    def log_prob(self, z0: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        zf, div_int = self.forward(z0)
+        logp_zf = self.base_distribution.log_prob(zf).reshape(-1, 1)
+        return zf, div_int, logp_zf + div_int
+
+    def training_step(self,
+                      batch: tuple[torch.Tensor],
+                      batch_idx: torch.Tensor):
+        _, _, log_prob = self.log_prob(batch[0])
+        loss = -log_prob.mean()
+        return loss
+
+    def validation_step(self,
+                        batch: tuple[torch.Tensor],
+                        batch_idx: torch.Tensor):
+        _, _, log_prob = self.log_prob(batch[0])
+        loss = -log_prob.mean()
+        self.val_metrics.update(loss)
+
+    def test_step(self,
+                  batch: tuple[torch.Tensor],
+                  batch_idx: torch.Tensor):
+        _, _, log_prob = self.log_prob(batch[0])
+        loss = -log_prob.mean()
+        self.test_metrics.update(loss)
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(
+            self.parameters(),
+            lr=self.learning_rate
+        )
+        return optimizer
+
+    @torch.no_grad()
+    def sample(self, num_samples: int) -> tuple[torch.Tensor, torch.Tensor]:
+        zf = self.base_distribution.sample((num_samples,))
+        integration_times_reversed = torch.flip(self.integration_times,
+                                                dims=[0])
+        z0 = odeint(
+            self.vector_field,
+            zf,
+            integration_times_reversed.type_as(zf),
+            method=self.solver,
+            atol=self.atol,
+            rtol=self.rtol
+        )
+        return zf, z0[-1]
+
+
+class CNFTorchModel(TorchModel):
+
+    TORCH_MODEL_TYPE: ClassVar[Type[CNFTorchModule]] = CNFTorchModule
+    TORCH_MODEL_ARTIFACT_PATH: ClassVar[str] = 'cnf_torch.pt'
+
+    vector_field: VectorFieldType
+    adjoint: AdjointType = True
+    base_distribution: BaseDistributionType = 'standard_normal'
+    integration_times: IntegrationTimesType = [0.0, 1.0]
+    solver: SolverType = 'dopri5'
+    atol: AtolType = 1e-5
+    rtol: RtolType = 1e-5
+    learning_rate: LearningRateType = 1e-3
+    input_shape: tuple[int, ...]
+
+    torch_module: Annotated[
+        CNFTorchModule | None,
+        Field(
+            description="The underlying Torch module. If None, it will be created when accessed."
+        )
+    ] = None
+
+    @torch.no_grad()
+    def sample(self, shape: tuple[int]) -> tuple[torch.Tensor, torch.Tensor]:
+        base, transformed = self.torch_module.sample(shape[0])
+        return base, transformed
+
+    def get_new_torch_module(self) -> CNFTorchModule:
+        return CNFTorchModule(model_config=self)
+
+    def _to_mlflow(self, prefix=''):
+        super()._to_mlflow(prefix=prefix)
+        self.vector_field.to_mlflow(prefix=f'{prefix}.vector_field')
+        mlflow.log_param(f'{prefix}.adjoint', self.adjoint)
+        mlflow.log_param(f'{prefix}.base_distribution', self.base_distribution)
+        mlflow.log_param(f'{prefix}.integration_times',
+                         json.dumps(self.integration_times))
+        mlflow.log_param(f'{prefix}.solver', self.solver)
+        mlflow.log_param(f'{prefix}.atol', self.atol)
+        mlflow.log_param(f'{prefix}.rtol', self.rtol)
+        mlflow.log_param(f'{prefix}.learning_rate', self.learning_rate)
+        mlflow.log_param(f"{prefix}.input_shape", json.dumps(self.input_shape))
+
+    @classmethod
+    def from_mlflow(cls,
+                    mlflow_run: Run,
+                    prefix='', **kwargs):
+        kwargs = super()._from_mlflow(mlflow_run, prefix=prefix, **kwargs)
+        kwargs['adjoint'] = bool(mlflow_run.data.params.get(f'{prefix}.adjoint',
+                                                            cls.model_fields['adjoint'].default))
+        kwargs['base_distribution'] = mlflow_run.data.params.get(f'{prefix}.base_distribution',
+                                                                 cls.model_fields['base_distribution'].default)
+        kwargs['integration_times'] = mlflow_run.data.params.get(f'{prefix}.integration_times',
+                                                                 cls.model_fields['integration_times'].default)
+        if isinstance(kwargs['integration_times'], str):
+            kwargs['integration_times'] = json.loads(
+                kwargs['integration_times'])
+        kwargs['solver'] = mlflow_run.data.params.get(f'{prefix}.solver',
+                                                      cls.model_fields['solver'].default)
+        kwargs['atol'] = float(mlflow_run.data.params.get(f'{prefix}.atol',
+                                                          cls.model_fields['atol'].default))
+        kwargs['rtol'] = float(mlflow_run.data.params.get(f'{prefix}.rtol',
+                                                          cls.model_fields['rtol'].default))
+        kwargs['learning_rate'] = float(mlflow_run.data.params.get(f'{prefix}.learning_rate',
+                                                                   cls.model_fields['learning_rate'].default))
+        input_shape_str = mlflow_run.data.params[f'{prefix}.input_shape']
+        kwargs['input_shape'] = json.loads(input_shape_str)
+        vector_field_type: Type[MLFlowLoggedClass] = cls.model_fields['vector_field'].annotation
+        kwargs['vector_field'] = vector_field_type.from_mlflow(
+            mlflow_run,
+            prefix=f'{prefix}.vector_field'
+        )
+        return cls(**kwargs)
+
+
+class TimeEmbeddingMLPCNFTorchModel(CNFTorchModel):
+    vector_field: TimeEmbeddingMLPConfig
