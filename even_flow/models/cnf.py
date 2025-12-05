@@ -1,9 +1,5 @@
 from typing import Annotated, ClassVar, Literal, Any, Type
-from pathlib import Path
-from tempfile import TemporaryDirectory
-import shutil
-from datetime import datetime, timezone
-from pydantic import Field, PrivateAttr
+from pydantic import Field
 import torch
 from torch import nn
 from torchdiffeq import odeint, odeint_adjoint
@@ -12,42 +8,22 @@ import mlflow
 from mlflow.entities import Run
 import lightning as L
 import json
-from lightning.pytorch.loggers import MLFlowLogger
-from lightning.pytorch.callbacks import ModelCheckpoint
-from lightning.pytorch.callbacks.early_stopping import EarlyStopping
-from lightning.pytorch.profilers import AdvancedProfiler, SimpleProfiler
-from mlflow.models.model import ModelInfo
 from zuko.flows.continuous import CNF as ZukoCNF
 
 from .mlp import TimeEmbeddingMLPConfig
 from .real_nvp import ActivationType, HiddenFeaturesType
 from .torch import BaseNNModule, TorchModel
 from .lightning import (
-    CheckpointsDirType,
-    MaxEpochsType,
-    PatienceType,
-    TrainerAcceleratorType,
-    TrainerTestVerbosityType,
     LearningRateType,
-    MetricModeType,
-    MonitorType,
     LightningModel,
 )
-from ..pydantic import MLFlowLoggedModel
-from ..utils import get_logger
 from ..torch import TORCH_MODULES
-from ..mlflow import tmp_artifact_download, MLFlowLoggedClass
+from ..mlflow import MLFlowLoggedClass
 
 
 type AdjointType = Annotated[
     bool,
     Field(description="Whether to use the adjoint method for backpropagation")
-]
-type DivergenceStrategyType = Annotated[
-    Literal['exact', ],
-    Field(
-        description="Strategy for computing the divergence."
-    )
 ]
 type BaseDistributionType = Annotated[
     Literal['standard_normal', 'uniform'],
@@ -75,14 +51,6 @@ type RtolType = Annotated[
 type VectorFieldType = Annotated[
     MLFlowLoggedClass,
     Field(description="The vector field defining the CNF transformation.")
-]
-type ProfilerType = Annotated[
-    Literal['simple', 'advanced'],
-    Field(description="The profiler to use during training")
-]
-type MinDeltaType = Annotated[
-    float,
-    Field(description="Minimum change in the monitored metric to qualify as an improvement")
 ]
 
 
@@ -266,22 +234,22 @@ class CNFHutchingson(CNF):
                 raise ValueError(
                     f"Unsupported Hutchingson distribution: {self.hutchingson_distribution}")
 
+    @torch.enable_grad()
     def augmented_function(self,
                            t: torch.Tensor,
                            state: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         z, _ = state
-        with torch.enable_grad():
-            z = z.clone().requires_grad_(True)
-            dzdt = self.vector_field.forward(t, z)
-            grad_outputs = self.noise_distribution.sample(z.shape)
-            (epsjp,) = torch.autograd.grad(
-                dzdt, z, grad_outputs=grad_outputs, create_graph=True)
-            divergence = (epsjp * grad_outputs).sum(dim=-1)
+        z = z.clone().requires_grad_(True)
+        dzdt = self.vector_field.forward(t, z)
+        grad_outputs = self.noise_distribution.sample(z.shape)
+        (epsjp,) = torch.autograd.grad(
+            dzdt, z, grad_outputs=grad_outputs, create_graph=True)
+        divergence = (epsjp * grad_outputs).sum(dim=-1)
 
         return z, divergence.reshape(-1, 1)
 
 
-class CNFModel(MLFlowLoggedModel):
+class CNFModel(LightningModel):
 
     LIGHTNING_MODULE_ARTIFACT_PATH: ClassVar[str] = 'CNF.ckpt'
     LIGHTNING_MODULE_TYPE: ClassVar[Type[CNF]] = CNF
@@ -294,233 +262,62 @@ class CNFModel(MLFlowLoggedModel):
     atol: AtolType = 1e-5
     rtol: RtolType = 1e-5
     learning_rate: LearningRateType = 1e-3
-    accelerator: TrainerAcceleratorType = 'cpu'
-    checkpoints_dir: CheckpointsDirType = None
-    max_epochs: MaxEpochsType = 3
-    patience: PatienceType = 3
-    verbose: TrainerTestVerbosityType = True
-    mode: MetricModeType = 'min'
-    monitor: MonitorType = 'val_loss'
-    num_sanity_val_steps: int = 5
-    profiler: ProfilerType = 'simple'
-    min_delta: MinDeltaType = 1e-3
     input_shape: tuple[int, ...]
 
-    _lightning_module: Annotated[
+    lightning_module: Annotated[
         CNF | None,
-        PrivateAttr()
+        Field(description="The Lightning module instance.")
     ] = None
 
-    @property
-    def lightning_module(self) -> CNF:
-        return self._lightning_module
-
-    def model_post_init(self, context):
-        if self._lightning_module is None:
-            self._lightning_module = self.LIGHTNING_MODULE_TYPE(
-                model_config=self)
+    def get_new_lightning_module(self):
+        return CNF(self)
 
     def _to_mlflow(self, prefix=''):
-        if prefix:
-            prefix += '.'
-        self.vector_field.to_mlflow(prefix=f'{prefix}vector_field')
-        mlflow.log_param(f'{prefix}adjoint', self.adjoint)
-        mlflow.log_param(f'{prefix}base_distribution', self.base_distribution)
-        if self.integration_times == 'None':
-            mlflow.log_param(f'{prefix}integration_times', None)
-        else:
-            mlflow.log_param(f'{prefix}integration_times',
-                             json.dumps(self.integration_times))
-        mlflow.log_param(f'{prefix}solver', self.solver)
-        mlflow.log_param(f'{prefix}atol', self.atol)
-        mlflow.log_param(f'{prefix}rtol', self.rtol)
-        mlflow.log_param(f'{prefix}learning_rate', self.learning_rate)
-        mlflow.log_param(f'{prefix}accelerator', self.accelerator)
-        mlflow.log_param(f'{prefix}checkpoints_dir', str(self.checkpoints_dir))
-        mlflow.log_param(f'{prefix}max_epochs', self.max_epochs)
-        mlflow.log_param(f'{prefix}patience', self.patience)
-        mlflow.log_param(f'{prefix}verbose', self.verbose)
-        mlflow.log_param(f'{prefix}mode', self.mode)
-        mlflow.log_param(f'{prefix}monitor', self.monitor)
-        mlflow.log_param(f'{prefix}num_sanity_val_steps',
-                         self.num_sanity_val_steps)
-        mlflow.log_param(f'{prefix}min_delta', self.min_delta)
-        mlflow.log_param(f'{prefix}input_shape', json.dumps(self.input_shape))
+        super()._to_mlflow(prefix=prefix)
+        self.vector_field.to_mlflow(prefix=f'{prefix}.vector_field')
+        mlflow.log_param(f'{prefix}.adjoint', self.adjoint)
+        mlflow.log_param(f'{prefix}.base_distribution', self.base_distribution)
+        mlflow.log_param(f'{prefix}.integration_times',
+                         json.dumps(self.integration_times))
+        mlflow.log_param(f'{prefix}.solver', self.solver)
+        mlflow.log_param(f'{prefix}.atol', self.atol)
+        mlflow.log_param(f'{prefix}.rtol', self.rtol)
+        mlflow.log_param(f'{prefix}.learning_rate', self.learning_rate)
+        mlflow.log_param(f'{prefix}.input_shape', json.dumps(self.input_shape))
 
     @classmethod
-    def _from_mlflow(cls, mlflow_run, prefix='', kwargs: dict = {}) -> dict[str, Any]:
-        formated_prefix = prefix
-        if prefix:
-            formated_prefix += '.'
-        kwargs['adjoint'] = bool(mlflow_run.data.params.get(f'{formated_prefix}adjoint',
+    def _from_mlflow(cls, mlflow_run, prefix='', **kwargs) -> dict[str, Any]:
+        kwargs = super()._from_mlflow(mlflow_run, prefix, **kwargs)
+        kwargs['adjoint'] = bool(mlflow_run.data.params.get(f'{prefix}.adjoint',
                                                             cls.model_fields['adjoint'].default))
-        kwargs['base_distribution'] = mlflow_run.data.params.get(f'{prefix}base_distribution',
+        kwargs['base_distribution'] = mlflow_run.data.params.get(f'{prefix}.base_distribution',
                                                                  cls.model_fields['base_distribution'].default)
-        kwargs['integration_times'] = mlflow_run.data.params.get(f'{formated_prefix}integration_times',
+        kwargs['integration_times'] = mlflow_run.data.params.get(f'{prefix}.integration_times',
                                                                  cls.model_fields['integration_times'].default)
         if isinstance(kwargs['integration_times'], str):
             kwargs['integration_times'] = json.loads(
                 kwargs['integration_times'])
-        kwargs['solver'] = mlflow_run.data.params.get(f'{formated_prefix}solver',
+        kwargs['solver'] = mlflow_run.data.params.get(f'{prefix}.solver',
                                                       cls.model_fields['solver'].default)
-        kwargs['atol'] = float(mlflow_run.data.params.get(f'{formated_prefix}atol',
+        kwargs['atol'] = float(mlflow_run.data.params.get(f'{prefix}.atol',
                                                           cls.model_fields['atol'].default))
-        kwargs['rtol'] = float(mlflow_run.data.params.get(f'{formated_prefix}rtol',
+        kwargs['rtol'] = float(mlflow_run.data.params.get(f'{prefix}.rtol',
                                                           cls.model_fields['rtol'].default))
-        kwargs['learning_rate'] = float(mlflow_run.data.params.get(f'{formated_prefix}learning_rate',
+        kwargs['learning_rate'] = float(mlflow_run.data.params.get(f'{prefix}.learning_rate',
                                                                    cls.model_fields['learning_rate'].default))
-        kwargs['accelerator'] = mlflow_run.data.params.get(f'{formated_prefix}accelerator',
-                                                           cls.model_fields['accelerator'].default)
-        kwargs['checkpoints_dir'] = mlflow_run.data.params.get(f'{formated_prefix}checkpoints_dir',
-                                                               cls.model_fields['checkpoints_dir'].default)
-        if kwargs['checkpoints_dir'] == 'None':
-            kwargs['checkpoints_dir'] = None
-        kwargs['max_epochs'] = int(mlflow_run.data.params.get(f'{formated_prefix}max_epochs',
-                                                              cls.model_fields['max_epochs'].default))
-        kwargs['patience'] = mlflow_run.data.params.get(f'{formated_prefix}patience',
-                                                        cls.model_fields['patience'].default)
-        kwargs['patience'] = int(kwargs['patience'])
-        kwargs['verbose'] = bool(mlflow_run.data.params.get(f'{formated_prefix}verbose',
-                                                            cls.model_fields['verbose'].default))
-        kwargs['mode'] = mlflow_run.data.params.get(f'{formated_prefix}mode',
-                                                    cls.model_fields['mode'].default)
-        kwargs['monitor'] = mlflow_run.data.params.get(f'{formated_prefix}monitor',
-                                                       cls.model_fields['monitor'].default)
-        kwargs['num_sanity_val_steps'] = int(mlflow_run.data.params.get(f'{formated_prefix}num_sanity_val_steps',
-                                                                        cls.model_fields['num_sanity_val_steps'].default))
-        kwargs['min_delta'] = float(mlflow_run.data.params.get(f'{formated_prefix}min_delta',
-                                                               cls.model_fields['min_delta'].default))
         kwargs['input_shape'] = json.loads(
-            mlflow_run.data.params[f'{formated_prefix}input_shape'])
+            mlflow_run.data.params[f'{prefix}.input_shape'])
         vector_field_type: Type[MLFlowLoggedClass] = cls.model_fields['vector_field'].annotation
         kwargs['vector_field'] = vector_field_type.from_mlflow(
             mlflow_run,
-            prefix=f'{formated_prefix}vector_field'
+            prefix=f'{prefix}.vector_field'
         )
-        instance = cls(**kwargs)
-        with tmp_artifact_download(
-            run_id=mlflow_run.info.run_id,
-            artifact_path=instance.get_lightning_module_artifact_name(prefix)
-        ) as ckpt_path:
-            instance._lightning_module = cls.LIGHTNING_MODULE_TYPE.load_from_checkpoint(
-                ckpt_path)
-        return instance
-
-    def get_mlflow_logger(self) -> MLFlowLogger:
-        mlflow_client = mlflow.MlflowClient()
-        active_run = mlflow.active_run()
-        experiment = mlflow_client.get_experiment(
-            active_run.info.experiment_id)
-        lightning_mlflow_logger = MLFlowLogger(
-            run_name=active_run.data.tags['mlflow.runName'],
-            run_id=active_run.info.run_id,
-            tracking_uri=mlflow.mlflow.get_tracking_uri(),
-            experiment_name=experiment.name
-        )
-        return lightning_mlflow_logger
-
-    def get_lightning_module_artifact_name(self, prefix='') -> str:
-        if prefix:
-            prefix = prefix.replace('.', '_') + '_'
-        artifact_name = f'{prefix}{self.LIGHTNING_MODULE_ARTIFACT_PATH}'
-        return artifact_name
-
-    def fit(self,
-            datamodule: L.LightningDataModule,
-            prefix: str = '') -> tuple[L.Trainer, ModelInfo]:
-        logger = get_logger()
-        logger.debug('Creating trainer...')
-        lightning_mlflow_logger = self.get_mlflow_logger()
-
-        callbacks = []
-        with TemporaryDirectory() as tmp_dir:
-            tmp_dir = Path(tmp_dir)
-            if self.checkpoints_dir is None:
-                checkpoints_dir = tmp_dir / "checkpoints"
-            else:
-                checkpoints_dir = self.checkpoints_dir
-            checkpoint = ModelCheckpoint(
-                monitor=self.monitor,  # Monitor a validation metric
-                dirpath=checkpoints_dir,  # Directory to save checkpoints
-                filename='best-model-{epoch:02d}-{val_max_sp:.2f}',
-                save_top_k=3,
-                mode=self.mode,  # Save based on maximum validation accuracy
-                save_on_train_epoch_end=False
-            )
-
-            callbacks = [
-                EarlyStopping(
-                    monitor=self.monitor,
-                    patience=self.patience,
-                    mode=self.mode,
-                    min_delta=self.min_delta,
-                    stopping_threshold=-100
-                ),
-                checkpoint,
-            ]
-            profiler_filename = "profiler-results"
-            fit_profiler_filename = f'fit-{profiler_filename}.txt'
-            profiler_dir = tmp_dir
-            profiler = self.get_profiler(
-                dirpath=str(profiler_dir),
-                filename=profiler_filename
-            )
-            trainer = L.Trainer(
-                max_epochs=self.max_epochs,
-                accelerator=self.accelerator,
-                devices=1,
-                logger=lightning_mlflow_logger,
-                callbacks=callbacks,
-                enable_progress_bar=self.verbose,
-                enable_model_summary=self.verbose,
-                num_sanity_val_steps=self.num_sanity_val_steps,
-                profiler=profiler
-            )
-
-            logger.debug('Starting training process...')
-            fit_start = datetime.now(timezone.utc)
-            mlflow.log_metric('fit_start', fit_start.timestamp())
-            trainer.fit(self.lightning_module, datamodule=datamodule)
-            fit_end = datetime.now(timezone.utc)
-            mlflow.log_metric('fit_end', fit_end.timestamp())
-            mlflow.log_metric(
-                "fit_duration", (fit_end - fit_start).total_seconds())
-            logger.debug('Logging model artifacts to MLflow...')
-            mlflow.log_artifact(str(profiler_dir / fit_profiler_filename))
-            self._lightning_module = self.LIGHTNING_MODULE_TYPE.load_from_checkpoint(
-                checkpoint.best_model_path)
-            checkpoint_temp_path = Path(
-                tmp_dir) / self.get_lightning_module_artifact_name(prefix)
-            shutil.copy(checkpoint.best_model_path, checkpoint_temp_path)
-            mlflow.log_artifact(str(checkpoint_temp_path))
-            model_info = mlflow.pytorch.log_model(
-                pytorch_model=self.lightning_module,
-                name='model')
-            shutil.rmtree(str(checkpoints_dir))
-
-        return trainer, model_info
+        return kwargs
 
     def sample(self, shape: tuple[int]) -> torch.Tensor:
+        if self.lightning_module is None:
+            self.lightning_module = self.get_new_lightning_module()
         return self.lightning_module.sample(num_samples=shape[0])
-
-    def evaluate(self,
-                 dataloader: torch.utils.data.DataLoader) -> dict[str, Any]:
-        # Using trainer.test doesn´t allow computing the internal
-        # jacobian necessary to compute the log_prob, so we manually
-        # run the test loop here.
-        for i, batch in enumerate(dataloader):
-            self.lightning_module.test_step(batch, i)
-        metrics = self.lightning_module.get_test_metrics()
-        self.lightning_module.reset_metrics()
-        return metrics
-
-    def get_profiler(self, **kwargs) -> SimpleProfiler | AdvancedProfiler:
-        if self.profiler == 'simple':
-            return SimpleProfiler(**kwargs)
-        elif self.profiler == 'advanced':
-            return AdvancedProfiler(**kwargs)
-        else:
-            raise ValueError(f"Unsupported profiler: {self.profiler}")
 
 
 class TimeEmbeddingMLPCNFModel(CNFModel):
@@ -548,13 +345,11 @@ class CNFHutchingsonModel(CNFModel):
             f'{formated_prefix}hutchingson_distribution', self.hutchingson_distribution)
 
     @classmethod
-    def _from_mlflow(cls, mlflow_run, prefix='', kwargs={}):
-        formated_prefix = prefix
-        if prefix:
-            formated_prefix += '.'
-        kwargs['hutchingson_distribution'] = mlflow_run.data.params.get(f'{formated_prefix}hutchingson_distribution',
+    def _from_mlflow(cls, mlflow_run, prefix='', **kwargs) -> dict[str, Any]:
+        kwargs = super()._from_mlflow(mlflow_run, prefix, **kwargs)
+        kwargs['hutchingson_distribution'] = mlflow_run.data.params.get(f'{prefix}.hutchingson_distribution',
                                                                         cls.model_fields['hutchingson_distribution'].default)
-        return super()._from_mlflow(mlflow_run, prefix, kwargs)
+        return kwargs
 
 
 class TimeEmbeddingMLPCNFHutchinsonModel(CNFHutchingsonModel):
@@ -692,7 +487,7 @@ class ZukoCNFModel(LightningModel):
     @classmethod
     def _from_mlflow(cls,
                      mlflow_run: Run,
-                     prefix='', **kwargs):
+                     prefix='', **kwargs) -> dict[str, Any]:
         kwargs = super()._from_mlflow(mlflow_run, prefix=prefix, **kwargs)
         if prefix:
             prefix += '.'
@@ -722,11 +517,12 @@ class ZukoCNFModel(LightningModel):
             f'{prefix}activation', cls.model_fields['activation'].default
         )
         kwargs['activation'] = activation_str if activation_str != 'None' else None
-        instance = cls(**kwargs)
-        return instance
+        return kwargs
 
     @torch.no_grad()
     def sample(self, shape: tuple[int]) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.lightning_module is None:
+            self.lightning_module = self.get_new_lightning_module()
         normalizing_flow = self.lightning_module.model()
         if normalizing_flow.base.has_rsample:
             zf = normalizing_flow.base.rsample(shape)
@@ -744,10 +540,8 @@ class CNFTorchModule(BaseNNModule):
 
         self.vector_field: nn.Module = model_config.vector_field.as_nn_module()
         self.adjoint = model_config.adjoint
-        if self.adjoint:
-            self.odeint_func = odeint_adjoint
-        else:
-            self.odeint_func = odeint
+        if not self.adjoint:
+            raise ValueError("Only adjoint method is currently supported.")
 
         self.input_shape = model_config.input_shape
         self.sum_dims = tuple(range(1, len(self.input_shape)+1))
@@ -799,13 +593,14 @@ class CNFTorchModule(BaseNNModule):
         #                                z0)
         div0 = torch.zeros(z0.shape[0], 1, dtype=z0.dtype)
 
-        z, int_div = self.odeint_func(
+        z, int_div = odeint_adjoint(
             self.augmented_function,
             (z0, div0),
             self.integration_times.type_as(z0),
             method=self.solver,
             atol=self.atol,
-            rtol=self.rtol
+            rtol=self.rtol,
+            adjoint_params=self.vector_field.parameters()
         )
         return z[-1], int_div[-1]
 
@@ -908,6 +703,8 @@ class CNFTorchModel(TorchModel):
 
     @torch.no_grad()
     def sample(self, shape: tuple[int]) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.torch_module is None:
+            self.torch_module = self.get_new_torch_module()
         base, transformed = self.torch_module.sample(shape[0])
         return base, transformed
 
@@ -928,9 +725,9 @@ class CNFTorchModel(TorchModel):
         mlflow.log_param(f"{prefix}.input_shape", json.dumps(self.input_shape))
 
     @classmethod
-    def from_mlflow(cls,
-                    mlflow_run: Run,
-                    prefix='', **kwargs):
+    def _from_mlflow(cls,
+                     mlflow_run: Run,
+                     prefix='', **kwargs) -> dict[str, Any]:
         kwargs = super()._from_mlflow(mlflow_run, prefix=prefix, **kwargs)
         kwargs['adjoint'] = bool(mlflow_run.data.params.get(f'{prefix}.adjoint',
                                                             cls.model_fields['adjoint'].default))
@@ -956,7 +753,7 @@ class CNFTorchModel(TorchModel):
             mlflow_run,
             prefix=f'{prefix}.vector_field'
         )
-        return cls(**kwargs)
+        return kwargs
 
 
 class TimeEmbeddingMLPCNFTorchModel(CNFTorchModel):

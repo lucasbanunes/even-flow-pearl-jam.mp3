@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Annotated
+from typing import Annotated, Any
 from pathlib import Path
 from typing import Self
 from pydantic import BaseModel, Field, ConfigDict
@@ -73,14 +73,15 @@ class MLFlowLoggedModel(BaseModel, ABC):
     @classmethod
     @abstractmethod
     def _from_mlflow(cls, mlflow_run: Run,
-                     prefix: str = '') -> Self:
+                     prefix: str = '') -> dict[str, Any]:
         raise NotImplementedError(
             "from_mlflow method must be implemented by subclasses.")
 
     @classmethod
     def from_mlflow(cls, mlflow_run: Run,
                     prefix: str = '') -> Self:
-        instance = cls._from_mlflow(mlflow_run, prefix=prefix)
+        kwargs = cls._from_mlflow(mlflow_run, prefix=prefix)
+        instance = cls(**kwargs)
         instance.id_ = mlflow_run.info.run_id
         instance.name = mlflow_run.data.tags.get('mlflow.runName', None)
         instance.prefix = prefix

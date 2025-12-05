@@ -1,4 +1,4 @@
-from typing import Annotated, ClassVar, Type
+from typing import Annotated, Any, ClassVar, Type
 from pydantic import Field
 import torch
 from zuko.flows import RealNVP
@@ -160,7 +160,7 @@ class RealNVPModel(LightningModel):
     @classmethod
     def _from_mlflow(cls,
                      mlflow_run: Run,
-                     prefix='', **kwargs):
+                     prefix='', **kwargs) -> dict[str, Any]:
         kwargs = super()._from_mlflow(mlflow_run, prefix=prefix, **kwargs)
         if prefix:
             prefix += '.'
@@ -184,8 +184,7 @@ class RealNVPModel(LightningModel):
             f'{prefix}activation', cls.model_fields['activation'].default
         )
         kwargs['activation'] = activation_str if activation_str != 'None' else None
-        instance = cls(**kwargs)
-        return instance
+        return kwargs
 
     def sample(self, shape: tuple[int],
                context: torch.Tensor | None = None) -> torch.Tensor:

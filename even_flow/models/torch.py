@@ -135,6 +135,7 @@ class TorchModel(MLFlowLoggedModel):
                     total=len(val_dataloader),
                 ) if val_dataloader is not None else None
                 epoch_start = datetime.now(timezone.utc).timestamp()
+                training_loss_sum = 0
                 for batch_index, batch in train_dataloader_iterator:
 
                     current_step += 1
@@ -153,6 +154,8 @@ class TorchModel(MLFlowLoggedModel):
                     loss.backward()
                     optimizer.step()
 
+                    training_loss_sum += loss.item()
+
                 if val_dataloader_iterator is None:
                     continue
 
@@ -164,6 +167,12 @@ class TorchModel(MLFlowLoggedModel):
                 mlflow.log_metric(
                     f"{prefix}.epoch_duration",
                     epoch_end - epoch_start,
+                    step=current_step
+                )
+                training_loss_epoch = training_loss_sum / len(train_dataloader)
+                mlflow.log_metric(
+                    f"{prefix}.training_loss_epoch",
+                    training_loss_epoch,
                     step=current_step
                 )
 
@@ -209,7 +218,7 @@ class TorchModel(MLFlowLoggedModel):
         self.early_stopping.to_mlflow(prefix=prefix + 'early_stopping')
 
     @classmethod
-    def _from_mlflow(cls, mlflow_run, prefix='', **kwargs):
+    def _from_mlflow(cls, mlflow_run, prefix='', **kwargs) -> dict[str, Any]:
         kwargs['max_epochs'] = int(mlflow_run.data.params.get(
             f'{prefix}.max_epochs',
             cls.model_fields['max_epochs'].default))

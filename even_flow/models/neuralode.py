@@ -1,4 +1,4 @@
-from typing import Annotated, ClassVar, Type, Literal
+from typing import Annotated, Any, ClassVar, Type, Literal
 
 import mlflow
 from pydantic import Field
@@ -270,7 +270,7 @@ class NeuralODEModel(LightningModel):
     @classmethod
     def _from_mlflow(cls,
                      mlflow_run: Run,
-                     prefix='', **kwargs):
+                     prefix='', **kwargs) -> dict[str, Any]:
         kwargs = super()._from_mlflow(mlflow_run, prefix=prefix, **kwargs)
         if prefix:
             prefix += '.'
@@ -323,8 +323,7 @@ class NeuralODEModel(LightningModel):
                 mlflow_run.data.params[f'{prefix}input_shape']
             )
         )
-        instance = cls(**kwargs)
-        return instance
+        return kwargs
 
     def sample(self, shape: tuple[int],
                context: torch.Tensor | None = None):

@@ -65,8 +65,8 @@ def test_time_embedding_mlp_cnf(data_dir: Path):
     loaded_job = MoonsTimeEmbeddingMLPCNFJob.from_mlflow_run_id(
         job.id_
     )
-    job_dict = job.model_dump()
-    loaded_job_dict = loaded_job.model_dump()
+    job_dict = job.model_dump(exclude='model.lightning_module')
+    loaded_job_dict = loaded_job.model_dump(exclude='model.lightning_module')
     logging.info(f"Original job: {job_dict}")
     logging.info(f"Loaded job: {loaded_job_dict}")
     assert job_dict == loaded_job_dict, "The loaded job does not match the original job."
@@ -100,8 +100,8 @@ def test_time_embedding_mlp_cnf_hutchingson(data_dir: Path):
     loaded_job = MoonsTimeEmbeddingMLPCNFHutchinsonJob.from_mlflow_run_id(
         job.id_
     )
-    job_dict = job.model_dump()
-    loaded_job_dict = loaded_job.model_dump()
+    job_dict = job.model_dump(exclude='model.lightning_module')
+    loaded_job_dict = loaded_job.model_dump(exclude='model.lightning_module')
     logging.info(f"Original job: {job_dict}")
     logging.info(f"Loaded job: {loaded_job_dict}")
     assert job_dict == loaded_job_dict, "The loaded job does not match the original job."

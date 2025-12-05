@@ -121,7 +121,7 @@ class ModelCheckpointConfig(MLFlowLoggedModel):
 
     @classmethod
     def _from_mlflow(cls, mlflow_run: Run,
-                     prefix: str = '', **kwargs) -> 'ModelCheckpointConfig':
+                     prefix: str = '', **kwargs) -> dict[str, Any]:
         if prefix:
             prefix += '.'
         params = mlflow_run.data.params
@@ -137,7 +137,7 @@ class ModelCheckpointConfig(MLFlowLoggedModel):
                                               cls.model_fields['save_top_k'].default))
         kwargs['filename'] = params.get(f"{prefix}filename",
                                         cls.model_fields['filename'].default)
-        return cls(**kwargs)
+        return kwargs
 
 
 class EarlyStopping(MLFlowLoggedModel):
@@ -221,7 +221,7 @@ class EarlyStopping(MLFlowLoggedModel):
 
     @classmethod
     def _from_mlflow(cls, mlflow_run: Run,
-                     prefix: str = '') -> 'EarlyStopping':
+                     prefix: str = '', **kwargs) -> dict[str, Any]:
         kwargs = {}
         params = mlflow_run.data.params
         kwargs['monitor'] = params.get(f"{prefix}.monitor",
@@ -236,7 +236,7 @@ class EarlyStopping(MLFlowLoggedModel):
                                                   cls.model_fields['stopping_threshold'].default)
         if kwargs['stopping_threshold'] == 'None':
             kwargs['stopping_threshold'] = None
-        return cls(**kwargs)
+        return kwargs
 
 
 def get_lightning_module_artifact_name(suffix: str, prefix='') -> str:
@@ -384,7 +384,7 @@ class LightningModel(MLFlowLoggedModel):
         self.early_stopping.to_mlflow(prefix=prefix + 'early_stopping')
 
     @classmethod
-    def _from_mlflow(cls, mlflow_run, prefix='', **kwargs):
+    def _from_mlflow(cls, mlflow_run, prefix='', **kwargs) -> dict[str, Any]:
         if prefix:
             prefix += '.'
         kwargs['accelerator'] = mlflow_run.data.params.get(

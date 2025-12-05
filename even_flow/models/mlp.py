@@ -206,7 +206,7 @@ class TimeEmbeddingMLPConfig(MLFlowLoggedModel):
         )
 
     @classmethod
-    def _from_mlflow(cls, mlflow_run, prefix=''):
+    def _from_mlflow(cls, mlflow_run, prefix='', **kwargs) -> dict[str, Any]:
         if prefix:
             prefix = prefix.replace('.', '_') + '_'
         artifact_name = f'{prefix}{cls.JSON_ARTIFACT_PATH}'
@@ -214,8 +214,8 @@ class TimeEmbeddingMLPConfig(MLFlowLoggedModel):
             run_id=mlflow_run.info.run_id,
             artifact_path=artifact_name
         )
-        instance = cls(**config_dict)
-        return instance
+        kwargs.update(config_dict)
+        return kwargs
 
     def _to_mlflow(self, prefix=''):
         if prefix:
