@@ -288,29 +288,31 @@ class CNFModel(LightningModel):
     @classmethod
     def _from_mlflow(cls, mlflow_run, prefix='', **kwargs) -> dict[str, Any]:
         kwargs = super()._from_mlflow(mlflow_run, prefix, **kwargs)
-        kwargs['adjoint'] = bool(mlflow_run.data.params.get(f'{prefix}.adjoint',
+        if prefix:
+            prefix += '.'
+        kwargs['adjoint'] = bool(mlflow_run.data.params.get(f'{prefix}adjoint',
                                                             cls.model_fields['adjoint'].default))
-        kwargs['base_distribution'] = mlflow_run.data.params.get(f'{prefix}.base_distribution',
+        kwargs['base_distribution'] = mlflow_run.data.params.get(f'{prefix}base_distribution',
                                                                  cls.model_fields['base_distribution'].default)
-        kwargs['integration_times'] = mlflow_run.data.params.get(f'{prefix}.integration_times',
+        kwargs['integration_times'] = mlflow_run.data.params.get(f'{prefix}integration_times',
                                                                  cls.model_fields['integration_times'].default)
         if isinstance(kwargs['integration_times'], str):
             kwargs['integration_times'] = json.loads(
                 kwargs['integration_times'])
-        kwargs['solver'] = mlflow_run.data.params.get(f'{prefix}.solver',
+        kwargs['solver'] = mlflow_run.data.params.get(f'{prefix}solver',
                                                       cls.model_fields['solver'].default)
-        kwargs['atol'] = float(mlflow_run.data.params.get(f'{prefix}.atol',
+        kwargs['atol'] = float(mlflow_run.data.params.get(f'{prefix}atol',
                                                           cls.model_fields['atol'].default))
-        kwargs['rtol'] = float(mlflow_run.data.params.get(f'{prefix}.rtol',
+        kwargs['rtol'] = float(mlflow_run.data.params.get(f'{prefix}rtol',
                                                           cls.model_fields['rtol'].default))
-        kwargs['learning_rate'] = float(mlflow_run.data.params.get(f'{prefix}.learning_rate',
+        kwargs['learning_rate'] = float(mlflow_run.data.params.get(f'{prefix}learning_rate',
                                                                    cls.model_fields['learning_rate'].default))
         kwargs['input_shape'] = json.loads(
-            mlflow_run.data.params[f'{prefix}.input_shape'])
+            mlflow_run.data.params[f'{prefix}input_shape'])
         vector_field_type: Type[MLFlowLoggedClass] = cls.model_fields['vector_field'].annotation
         kwargs['vector_field'] = vector_field_type.from_mlflow(
             mlflow_run,
-            prefix=f'{prefix}.vector_field'
+            prefix=f'{prefix}vector_field'
         )
         return kwargs
 
@@ -347,7 +349,9 @@ class CNFHutchingsonModel(CNFModel):
     @classmethod
     def _from_mlflow(cls, mlflow_run, prefix='', **kwargs) -> dict[str, Any]:
         kwargs = super()._from_mlflow(mlflow_run, prefix, **kwargs)
-        kwargs['hutchingson_distribution'] = mlflow_run.data.params.get(f'{prefix}.hutchingson_distribution',
+        if prefix:
+            prefix += '.'
+        kwargs['hutchingson_distribution'] = mlflow_run.data.params.get(f'{prefix}hutchingson_distribution',
                                                                         cls.model_fields['hutchingson_distribution'].default)
         return kwargs
 
@@ -729,29 +733,31 @@ class CNFTorchModel(TorchModel):
                      mlflow_run: Run,
                      prefix='', **kwargs) -> dict[str, Any]:
         kwargs = super()._from_mlflow(mlflow_run, prefix=prefix, **kwargs)
-        kwargs['adjoint'] = bool(mlflow_run.data.params.get(f'{prefix}.adjoint',
+        if prefix:
+            prefix += '.'
+        kwargs['adjoint'] = bool(mlflow_run.data.params.get(f'{prefix}adjoint',
                                                             cls.model_fields['adjoint'].default))
-        kwargs['base_distribution'] = mlflow_run.data.params.get(f'{prefix}.base_distribution',
+        kwargs['base_distribution'] = mlflow_run.data.params.get(f'{prefix}base_distribution',
                                                                  cls.model_fields['base_distribution'].default)
-        kwargs['integration_times'] = mlflow_run.data.params.get(f'{prefix}.integration_times',
+        kwargs['integration_times'] = mlflow_run.data.params.get(f'{prefix}integration_times',
                                                                  cls.model_fields['integration_times'].default)
         if isinstance(kwargs['integration_times'], str):
             kwargs['integration_times'] = json.loads(
                 kwargs['integration_times'])
-        kwargs['solver'] = mlflow_run.data.params.get(f'{prefix}.solver',
+        kwargs['solver'] = mlflow_run.data.params.get(f'{prefix}solver',
                                                       cls.model_fields['solver'].default)
-        kwargs['atol'] = float(mlflow_run.data.params.get(f'{prefix}.atol',
+        kwargs['atol'] = float(mlflow_run.data.params.get(f'{prefix}atol',
                                                           cls.model_fields['atol'].default))
-        kwargs['rtol'] = float(mlflow_run.data.params.get(f'{prefix}.rtol',
+        kwargs['rtol'] = float(mlflow_run.data.params.get(f'{prefix}rtol',
                                                           cls.model_fields['rtol'].default))
-        kwargs['learning_rate'] = float(mlflow_run.data.params.get(f'{prefix}.learning_rate',
+        kwargs['learning_rate'] = float(mlflow_run.data.params.get(f'{prefix}learning_rate',
                                                                    cls.model_fields['learning_rate'].default))
-        input_shape_str = mlflow_run.data.params[f'{prefix}.input_shape']
+        input_shape_str = mlflow_run.data.params[f'{prefix}input_shape']
         kwargs['input_shape'] = json.loads(input_shape_str)
         vector_field_type: Type[MLFlowLoggedClass] = cls.model_fields['vector_field'].annotation
         kwargs['vector_field'] = vector_field_type.from_mlflow(
             mlflow_run,
-            prefix=f'{prefix}.vector_field'
+            prefix=f'{prefix}vector_field'
         )
         return kwargs
 

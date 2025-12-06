@@ -1,7 +1,7 @@
 from pathlib import Path
-from typing import Annotated, Self, ClassVar, Type
+from typing import Self, ClassVar, Type
 from datetime import datetime, timezone
-from pydantic import BeforeValidator, ConfigDict, PlainSerializer
+from pydantic import ConfigDict
 import mlflow
 from mlflow.entities import Run
 import json
@@ -17,7 +17,6 @@ from matplotlib.figure import Figure
 from .dataset import MoonsDataset
 from ..jobs import BaseJob, DEFAULT_TRAINING_JOB_METRICS
 from ..utils import get_logger
-from ..pydantic import YamlBaseModel
 from ..mlflow import MLFlowLoggedClass, load_json
 from ..models.cnf import (
     TimeEmbeddingMLPCNFModel,
@@ -28,9 +27,19 @@ from ..models.cnf import (
 from ..models.real_nvp import RealNVPModel
 from ..models.neuralode import TimeEmbeddingMLPNeuralODEModel
 from ..plotting import quiver_plot
+from ..pydantic import YamlBaseModel
 
 
 class BaseMoonsJob(BaseJob, YamlBaseModel):
+
+    MODEL_PREFIX: ClassVar[str] = 'model'
+    DATASET_PREFIX: ClassVar[str] = 'dataset'
+    METRICS_ARTIFACT_PATH: ClassVar[str] = 'metrics.json'
+
+    dataset: MoonsDataset = MoonsDataset()
+    model: MLFlowLoggedClass
+    metrics: dict[str, dict[str, float | int]
+                  ] = DEFAULT_TRAINING_JOB_METRICS.copy()
 
     def plot_comparison(self, n_samples: int = 1000,
                         axes: list[Axes] | None = None
@@ -64,12 +73,13 @@ class BaseMoonsJob(BaseJob, YamlBaseModel):
         logger = get_logger()
 
         self.model.to_mlflow(prefix=self.MODEL_PREFIX)
-        self.datamodule.to_mlflow(prefix=self.DATAMODULE_PREFIX)
+        self.dataset.to_mlflow(prefix=self.DATASET_PREFIX)
         logger.info('Fitting model...')
         fit_start = datetime.now(timezone.utc)
         mlflow.log_metric('fit_start', fit_start.timestamp())
+        datamodule = self.dataset.as_lightning_datamodule()
         fit_response = self.model.fit(
-            self.datamodule, prefix=self.MODEL_PREFIX)
+            datamodule, prefix=self.MODEL_PREFIX)
         if isinstance(fit_response, ModelInfo):
             model_info = fit_response
         elif len(fit_response) == 1:
@@ -87,20 +97,20 @@ class BaseMoonsJob(BaseJob, YamlBaseModel):
         )
 
         dataloaders = {
-            'train': self.datamodule.train_dataloader(),
+            'train': datamodule.train_dataloader(),
         }
         try:
-            dataloaders['val'] = self.datamodule.val_dataloader()
+            dataloaders['val'] = datamodule.val_dataloader()
         except Exception as e:
             if not str(e).startswith('`val_dataloader` must be implemented'):
                 raise e
         try:
-            dataloaders['test'] = self.datamodule.test_dataloader()
+            dataloaders['test'] = datamodule.test_dataloader()
         except Exception as e:
             if not str(e).startswith('`test_dataloader` must be implemented'):
                 raise e
         try:
-            dataloaders['predict'] = self.datamodule.predict_dataloader()
+            dataloaders['predict'] = datamodule.predict_dataloader()
         except Exception as e:
             if not str(e).startswith('`predict_dataloader` must be implemented'):
                 raise e
@@ -140,8 +150,8 @@ class BaseMoonsJob(BaseJob, YamlBaseModel):
                 mlflow_run,
                 prefix=f'{prefix}{cls.MODEL_PREFIX}'
             ),
-            datamodule=MoonsDataset.from_mlflow(mlflow_run,
-                                                prefix=f'{prefix}{cls.DATAMODULE_PREFIX}'),
+            dataset=MoonsDataset.from_mlflow(mlflow_run,
+                                             prefix=f'{prefix}{cls.DATASET_PREFIX}'),
             metrics=metrics,
         )
 
@@ -161,18 +171,7 @@ class BaseMoonsJob(BaseJob, YamlBaseModel):
 class MoonsTimeEmbeddingMLPCNFJob(BaseMoonsJob):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    DATAMODULE_PREFIX: ClassVar[str] = 'datamodule'
-    METRICS_ARTIFACT_PATH: ClassVar[str] = 'metrics.json'
-    MODEL_PREFIX: ClassVar[str] = 'model'
-
     model: TimeEmbeddingMLPCNFModel
-    datamodule: Annotated[
-        MoonsDataset,
-        BeforeValidator(MoonsDataset.pydantic_before_validator),
-        PlainSerializer(MoonsDataset.pydantic_plain_serializer)
-    ] = MoonsDataset()
-    metrics: dict[str, dict[str, float | int]
-                  ] = DEFAULT_TRAINING_JOB_METRICS.copy()
 
     def vector_field_plot(self,
                           x: torch.Tensor,
@@ -206,18 +205,7 @@ class MoonsRealNVPJob(BaseMoonsJob):
     model_config = ConfigDict(arbitrary_types_allowed=True,
                               extra='forbid')
 
-    DATAMODULE_PREFIX: ClassVar[str] = 'datamodule'
-    METRICS_ARTIFACT_PATH: ClassVar[str] = 'metrics.json'
-    MODEL_PREFIX: ClassVar[str] = 'model'
-
     model: RealNVPModel
-    datamodule: Annotated[
-        MoonsDataset,
-        BeforeValidator(MoonsDataset.pydantic_before_validator),
-        PlainSerializer(MoonsDataset.pydantic_plain_serializer)
-    ] = MoonsDataset()
-    metrics: dict[str, dict[str, float | int]
-                  ] = DEFAULT_TRAINING_JOB_METRICS.copy()
 
     def vector_field_plot(self,
                           x: torch.Tensor,
@@ -247,18 +235,7 @@ class MoonsRealNVPJob(BaseMoonsJob):
 class MoonsTimeEmbeddinngMLPNeuralODEJob(BaseMoonsJob):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    DATAMODULE_PREFIX: ClassVar[str] = 'datamodule'
-    METRICS_ARTIFACT_PATH: ClassVar[str] = 'metrics.json'
-    MODEL_PREFIX: ClassVar[str] = 'model'
-
     model: TimeEmbeddingMLPNeuralODEModel
-    datamodule: Annotated[
-        MoonsDataset,
-        BeforeValidator(MoonsDataset.pydantic_before_validator),
-        PlainSerializer(MoonsDataset.pydantic_plain_serializer)
-    ] = MoonsDataset()
-    metrics: dict[str, dict[str, float | int]
-                  ] = DEFAULT_TRAINING_JOB_METRICS.copy()
 
     def vector_field_plot(self,
                           x: torch.Tensor,
@@ -287,18 +264,7 @@ class MoonsZukoCNFJob(BaseMoonsJob):
     model_config = ConfigDict(arbitrary_types_allowed=True,
                               extra='forbid')
 
-    DATAMODULE_PREFIX: ClassVar[str] = 'datamodule'
-    METRICS_ARTIFACT_PATH: ClassVar[str] = 'metrics.json'
-    MODEL_PREFIX: ClassVar[str] = 'model'
-
     model: ZukoCNFModel
-    datamodule: Annotated[
-        MoonsDataset,
-        BeforeValidator(MoonsDataset.pydantic_before_validator),
-        PlainSerializer(MoonsDataset.pydantic_plain_serializer)
-    ] = MoonsDataset()
-    metrics: dict[str, dict[str, float | int]
-                  ] = DEFAULT_TRAINING_JOB_METRICS.copy()
 
 
 class MoonsTimeEmbeddingMLPCNFTorchJob(BaseMoonsJob):
@@ -306,15 +272,4 @@ class MoonsTimeEmbeddingMLPCNFTorchJob(BaseMoonsJob):
     model_config = ConfigDict(arbitrary_types_allowed=True,
                               extra='forbid')
 
-    DATAMODULE_PREFIX: ClassVar[str] = 'datamodule'
-    METRICS_ARTIFACT_PATH: ClassVar[str] = 'metrics.json'
-    MODEL_PREFIX: ClassVar[str] = 'model'
-
     model: TimeEmbeddingMLPCNFTorchModel
-    datamodule: Annotated[
-        MoonsDataset,
-        BeforeValidator(MoonsDataset.pydantic_before_validator),
-        PlainSerializer(MoonsDataset.pydantic_plain_serializer)
-    ] = MoonsDataset()
-    metrics: dict[str, dict[str, float | int]
-                  ] = DEFAULT_TRAINING_JOB_METRICS.copy()

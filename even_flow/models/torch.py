@@ -219,21 +219,24 @@ class TorchModel(MLFlowLoggedModel):
 
     @classmethod
     def _from_mlflow(cls, mlflow_run, prefix='', **kwargs) -> dict[str, Any]:
+        unformatted_prefix = prefix
+        if prefix:
+            prefix += "."
         kwargs['max_epochs'] = int(mlflow_run.data.params.get(
-            f'{prefix}.max_epochs',
+            f'{prefix}max_epochs',
             cls.model_fields['max_epochs'].default))
 
         verbose_str = mlflow_run.data.params.get(
-            f'{prefix}.verbose',
+            f'{prefix}verbose',
             str(cls.model_fields['verbose'].default))
         kwargs['verbose'] = verbose_str.lower() == 'true'
 
         kwargs['early_stopping'] = EarlyStopping.from_mlflow(
             mlflow_run,
-            prefix=prefix + '.early_stopping')
+            prefix=prefix + 'early_stopping')
         kwargs['torch_module'] = cls.load_module_from_checkpoint(
             run_id=mlflow_run.info.run_id,
-            prefix=prefix
+            prefix=unformatted_prefix
         )
         return kwargs
 

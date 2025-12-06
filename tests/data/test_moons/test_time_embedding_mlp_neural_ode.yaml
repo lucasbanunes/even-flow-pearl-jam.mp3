@@ -1,4 +1,4 @@
-datamodule:
+dataset:
   batch_size: 32
 model:
   input_shape: [2]

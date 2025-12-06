@@ -6,8 +6,7 @@ from pydantic import Field
 import mlflow
 from mlflow.entities import Run
 
-
-from ..mlflow import MLFlowLoggedClass
+from ..pydantic import MLFlowLoggedModel
 
 type RandomState = int | None
 
@@ -53,7 +52,7 @@ type BatchSizeType = Annotated[
 ]
 
 
-class MoonsDataset(L.LightningDataModule, MLFlowLoggedClass):
+class MoonsDataModule(L.LightningDataModule):
     """
     Lightning DataModule for generating 2D moon-shaped datasets.
 
@@ -77,7 +76,7 @@ class MoonsDataset(L.LightningDataModule, MLFlowLoggedClass):
                  noise: NoiseType = 0.1,
                  batch_size: BatchSizeType = 32,
                  random_state: RandomState = 42):
-        super(MoonsDataset, self).__init__()
+        super().__init__()
 
         self.train_samples = train_samples
         self.val_samples = val_samples
@@ -179,30 +178,47 @@ class MoonsDataset(L.LightningDataModule, MLFlowLoggedClass):
             "random_state": v.random_state,
         }
 
-    def _to_mlflow(self, prefix: str = "") -> dict[str, Any]:
-        """Log dataset parameters to MLflow."""
-        if prefix:
-            prefix += "."
-        mlflow.log_params({
-            f"{prefix}train_samples": self.train_samples,
-            f"{prefix}val_samples": self.val_samples,
-            f"{prefix}test_samples": self.test_samples,
-            f"{prefix}noise": self.noise,
-            f"{prefix}batch_size": self.batch_size,
-            f"{prefix}random_state": self.random_state,
-        })
+
+class MoonsDataset(MLFlowLoggedModel):
+    train_samples: TrainSamplesType = 1000
+    val_samples: ValSamplesType = 200
+    test_samples: TestSamplesType = 200
+    noise: NoiseType = 0.1
+    batch_size: BatchSizeType = 32
+    random_state: RandomState = 42
+
+    def as_lightning_datamodule(self) -> MoonsDataModule:
+        return MoonsDataModule(
+            train_samples=self.train_samples,
+            val_samples=self.val_samples,
+            test_samples=self.test_samples,
+            noise=self.noise,
+            batch_size=self.batch_size,
+            random_state=self.random_state
+        )
+
+    def _to_mlflow(self, prefix: str = ''):
+        mlflow.log_param(f'{prefix}.train_samples', self.train_samples)
+        mlflow.log_param(f'{prefix}.val_samples', self.val_samples)
+        mlflow.log_param(f'{prefix}.test_samples', self.test_samples)
+        mlflow.log_param(f'{prefix}.noise', self.noise)
+        mlflow.log_param(f'{prefix}.batch_size', self.batch_size)
+        mlflow.log_param(f'{prefix}.random_state', self.random_state)
 
     @classmethod
-    def _from_mlflow(cls, mlflow_run: Run, prefix: str = "") -> Self:
-        """Create an instance from MLflow logged parameters."""
+    def _from_mlflow(cls, mlflow_run: Run, prefix: str = '', **kwargs) -> dict[str, Any]:
         if prefix:
-            prefix += "."
-        return cls(
-            train_samples=int(
-                mlflow_run.data.params[f'{prefix}train_samples']),
-            val_samples=int(mlflow_run.data.params[f'{prefix}val_samples']),
-            test_samples=int(mlflow_run.data.params[f'{prefix}test_samples']),
-            noise=float(mlflow_run.data.params[f'{prefix}noise']),
-            batch_size=int(mlflow_run.data.params[f'{prefix}batch_size']),
-            random_state=int(mlflow_run.data.params[f'{prefix}random_state']),
-        )
+            prefix += '.'
+        kwargs['train_samples'] = int(mlflow_run.data.params.get(
+            f'{prefix}train_samples', cls.model_fields['train_samples'].default))
+        kwargs['val_samples'] = int(mlflow_run.data.params.get(
+            f'{prefix}val_samples', cls.model_fields['val_samples'].default))
+        kwargs['test_samples'] = int(mlflow_run.data.params.get(
+            f'{prefix}test_samples', cls.model_fields['test_samples'].default))
+        kwargs['noise'] = float(mlflow_run.data.params.get(
+            f'{prefix}noise', cls.model_fields['noise'].default))
+        kwargs['batch_size'] = int(mlflow_run.data.params.get(
+            f'{prefix}batch_size', cls.model_fields['batch_size'].default))
+        kwargs['random_state'] = int(mlflow_run.data.params.get(
+            f'{prefix}random_state', cls.model_fields['random_state'].default))
+        return kwargs

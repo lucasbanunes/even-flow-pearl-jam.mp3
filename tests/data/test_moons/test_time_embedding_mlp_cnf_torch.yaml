@@ -1,4 +1,4 @@
-datamodule:
+dataset:
   batch_size: 32
   train_samples: 100
   val_samples: 10

@@ -73,7 +73,7 @@ class MLFlowLoggedModel(BaseModel, ABC):
     @classmethod
     @abstractmethod
     def _from_mlflow(cls, mlflow_run: Run,
-                     prefix: str = '') -> dict[str, Any]:
+                     prefix: str = '', **kwargs) -> dict[str, Any]:
         raise NotImplementedError(
             "from_mlflow method must be implemented by subclasses.")
 

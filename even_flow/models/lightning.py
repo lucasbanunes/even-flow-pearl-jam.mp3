@@ -224,15 +224,17 @@ class EarlyStopping(MLFlowLoggedModel):
                      prefix: str = '', **kwargs) -> dict[str, Any]:
         kwargs = {}
         params = mlflow_run.data.params
-        kwargs['monitor'] = params.get(f"{prefix}.monitor",
+        if prefix:
+            prefix += '.'
+        kwargs['monitor'] = params.get(f"{prefix}monitor",
                                        cls.model_fields['monitor'].default)
-        kwargs['patience'] = int(params.get(f"{prefix}.patience",
+        kwargs['patience'] = int(params.get(f"{prefix}patience",
                                             cls.model_fields['patience'].default))
-        kwargs['min_delta'] = float(params.get(f"{prefix}.min_delta",
+        kwargs['min_delta'] = float(params.get(f"{prefix}min_delta",
                                                cls.model_fields['min_delta'].default))
-        kwargs['mode'] = params.get(f"{prefix}.mode",
+        kwargs['mode'] = params.get(f"{prefix}mode",
                                     cls.model_fields['mode'].default)
-        kwargs['stopping_threshold'] = params.get(f"{prefix}.stopping_threshold",
+        kwargs['stopping_threshold'] = params.get(f"{prefix}stopping_threshold",
                                                   cls.model_fields['stopping_threshold'].default)
         if kwargs['stopping_threshold'] == 'None':
             kwargs['stopping_threshold'] = None
