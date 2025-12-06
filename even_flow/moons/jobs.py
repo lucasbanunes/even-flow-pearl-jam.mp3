@@ -27,7 +27,7 @@ from ..models.cnf import (
 from ..models.real_nvp import RealNVPModel
 from ..models.neuralode import TimeEmbeddingMLPNeuralODEModel
 from ..plotting import quiver_plot
-from ..pydantic import YamlBaseModel
+from ..pydantic import MLFlowLoggedModel, YamlBaseModel
 
 
 class BaseMoonsJob(BaseJob, YamlBaseModel):
@@ -144,7 +144,7 @@ class BaseMoonsJob(BaseJob, YamlBaseModel):
             prefix += "."
         metrics = load_json(mlflow_run.info.run_id,
                             cls.METRICS_ARTIFACT_PATH)
-        model_type: Type[MLFlowLoggedClass] = cls.model_fields['model'].annotation
+        model_type: Type[MLFlowLoggedModel] = cls.model_fields['model'].annotation
         return cls(
             model=model_type.from_mlflow(
                 mlflow_run,
