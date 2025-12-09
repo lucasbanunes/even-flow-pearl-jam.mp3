@@ -1,0 +1,13 @@
+name: even-flow
+services:
+  even-flow:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: lucasbanunes/even-flow:latest
+    container_name: even-flow-container
+    volumes:
+      - ./:/root/workspaces/even-flow-pearl-jam.mp3
+      - ~/logs:/root/logs
+      - ~/data:/root/data
+    tty: true
