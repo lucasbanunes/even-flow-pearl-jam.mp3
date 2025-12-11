@@ -260,8 +260,9 @@ class LightningModel(MLFlowLoggedModel):
     accelerator: TrainerAcceleratorType = 'cpu'
     profiler: ProfilerType = 'simple'
     max_epochs: MaxEpochsType = 3
-    verbose: TrainerTestVerbosityType = True
     num_sanity_val_steps: int = 5
+    enable_progress_bar: bool = True
+    enable_model_summary: bool = True
 
     checkpoint: ModelCheckpointConfig = ModelCheckpointConfig()
     early_stopping: EarlyStopping = EarlyStopping()
@@ -312,8 +313,8 @@ class LightningModel(MLFlowLoggedModel):
                 devices=1,
                 logger=lightning_mlflow_logger,
                 callbacks=callbacks,
-                enable_progress_bar=self.verbose,
-                enable_model_summary=self.verbose,
+                enable_progress_bar=self.enable_progress_bar,
+                enable_model_summary=self.enable_model_summary,
                 num_sanity_val_steps=self.num_sanity_val_steps,
                 profiler=profiler
             )
@@ -379,7 +380,8 @@ class LightningModel(MLFlowLoggedModel):
         mlflow.log_param(f"{prefix}accelerator", self.accelerator)
         mlflow.log_param(f"{prefix}profiler", self.profiler)
         mlflow.log_param(f"{prefix}max_epochs", self.max_epochs)
-        mlflow.log_param(f"{prefix}verbose", self.verbose)
+        mlflow.log_param(f"{prefix}enable_progress_bar", self.enable_progress_bar)
+        mlflow.log_param(f"{prefix}enable_model_summary", self.enable_model_summary)
         mlflow.log_param(f"{prefix}num_sanity_val_steps",
                          self.num_sanity_val_steps)
         self.checkpoint.to_mlflow(prefix=prefix + 'checkpoint')
@@ -398,10 +400,6 @@ class LightningModel(MLFlowLoggedModel):
         kwargs['max_epochs'] = int(mlflow_run.data.params.get(
             f'{prefix}max_epochs',
             cls.model_fields['max_epochs'].default))
-        verbose_str = mlflow_run.data.params.get(
-            f'{prefix}verbose',
-            str(cls.model_fields['verbose'].default))
-        kwargs['verbose'] = verbose_str.lower() == 'true'
         kwargs['num_sanity_val_steps'] = int(mlflow_run.data.params.get(
             f'{prefix}num_sanity_val_steps',
             cls.model_fields['num_sanity_val_steps'].default))
@@ -415,6 +413,12 @@ class LightningModel(MLFlowLoggedModel):
             run_id=mlflow_run.info.run_id,
             prefix=prefix
         )
+        kwargs['enable_progress_bar'] = mlflow_run.data.params.get(
+            f'{prefix}enable_progress_bar',
+            str(cls.model_fields['enable_progress_bar'].default)).lower() == 'true'
+        kwargs['enable_model_summary'] = mlflow_run.data.params.get(
+            f'{prefix}enable_model_summary',
+            str(cls.model_fields['enable_model_summary'].default)).lower() == 'true'
         return kwargs
 
     @classmethod

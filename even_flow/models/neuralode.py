@@ -96,6 +96,7 @@ class NeuralODEModule(L.LightningModule):
         self.learning_rate = model_config.learning_rate
         self.integration_times = torch.Tensor(
             model_config.integration_times).float()
+        self.ode_options = model_config.ode_options
 
         self.train_metrics = MetricCollection({
             'loss': MeanMetric()
@@ -125,6 +126,7 @@ class NeuralODEModule(L.LightningModule):
             method=self.solver,
             atol=self.atol,
             rtol=self.rtol,
+            options=self.ode_options
         )
         return z, x[-1]
 
@@ -139,6 +141,7 @@ class NeuralODEModule(L.LightningModule):
             method=self.solver,
             atol=self.atol,
             rtol=self.rtol,
+            options=self.ode_options
         )
         return traj
 
@@ -205,6 +208,14 @@ class NeuralODEModule(L.LightningModule):
         return self.train_metrics.compute()
 
 
+type ODEOptionsType = Annotated[
+    dict[str, Any],
+    Field(
+        description="Additional options for the ODE solver. Check: https://github.com/rtqichen/torchdiffeq/blob/master/FURTHER_DOCUMENTATION.md"
+    )
+]
+
+
 class NeuralODEModel(LightningModel):
 
     BASE_PROFILER_FILENAME: ClassVar[str] = 'profiler'
@@ -220,6 +231,7 @@ class NeuralODEModel(LightningModel):
     atol: AToleranceType = 1e-6
     rtol: RToleranceType = 1e-6
     input_shape: tuple[int, ...]
+    ode_options: ODEOptionsType = {}
 
     lightning_module: Annotated[
         NeuralODEModule | None,
@@ -266,6 +278,11 @@ class NeuralODEModel(LightningModel):
             f"{prefix}input_shape",
             json.dumps(self.input_shape)
         )
+        for key, value in self.ode_options.items():
+            mlflow.log_param(
+                f"{prefix}ode_options.{key}",
+                json.dumps(value)
+            )
 
     @classmethod
     def _from_mlflow(cls,
@@ -323,6 +340,11 @@ class NeuralODEModel(LightningModel):
                 mlflow_run.data.params[f'{prefix}input_shape']
             )
         )
+        ode_options = {}
+        for param_key, param_value in mlflow_run.data.params.items():
+            if param_key.startswith(f'{prefix}ode_options.'):
+                option_key = param_key[len(f'{prefix}ode_options.'):]
+                ode_options[option_key] = json.loads(param_value)
         return kwargs
 
     def sample(self, shape: tuple[int],

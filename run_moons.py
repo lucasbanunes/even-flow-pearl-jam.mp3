@@ -20,6 +20,9 @@ from itertools import product
 import mlflow
 import warnings
 import numpy as np
+import submitit
+from pathlib import Path
+from datetime import datetime
 warnings.filterwarnings("ignore")
 
 
@@ -41,21 +44,33 @@ dataset = MoonsDataset(
     random_state=random_state
 )
 
-mlflow.set_experiment("Moons Neural ODE")
-rtols = np.logspace(-2, -7, 10)
-atols = np.logspace(-2, -7, 10)
+experiment_name = "Moons Neural ODE"
+rtols = np.logspace(-2, -7, 5)
+atols = np.logspace(-2, -7, 5)
 solvers = ['euler', 'dopri5', 'rk4']
 neurons = [[16, 2], [16, 16, 2], [16, 16, 16, 2]]
 max_epochs = 50
+learning_rate = 1e-3
+accelerator = 'cpu'
+
+jobs_to_run = []
+
+
+def run_job(job, mlflow_experiment_name):
+    mlflow.set_experiment(mlflow_experiment_name)
+    job.run()
 
 
 for i, (rtol, atol, solver, neuron_layers) in enumerate(product(rtols, atols, solvers, neurons)):
     logger.info(
         f'Runnning job: time-embedding-mlp-neural-ode-{i} | Solver: {solver} | rtol: {rtol} | atol: {atol}')
+    if solver in ['euler', 'rk4']:
+        ode_options = dict(step_size=0.1)
+    else:
+        ode_options = dict()
     job = MoonsTimeEmbeddinngMLPNeuralODEJob(
         dataset=dataset,
         name=f'time-embedding-mlp-neural-ode-{i}',
-        max_epochs=max_epochs,
         model=TimeEmbeddingMLPNeuralODEModel(
             input_shape=(2,),
             vector_field=dict(
@@ -73,31 +88,34 @@ for i, (rtol, atol, solver, neuron_layers) in enumerate(product(rtols, atols, so
                 monitor='val_loss',
                 mode='min',
                 patience=5,
-                min_delta=1e-3,
+                min_delta=1e-2,
                 stopping_threshold=-10
             ),
             checkpoint=dict(
                 monitor='val_loss',
                 mode='min',
             ),
-            learning_rate=1e-3
+            learning_rate=1e-3,
+            enable_progress_bar=False,
+            accelerator=accelerator,
+            ode_options=ode_options
         ),
     )
-    job.run()
+    jobs_to_run.append((job, experiment_name))
+
 
 neuron_options = [
+    [16, 16],
+    [16, 16, 16, 16],
     [64, 64],
     [64, 64, 64, 64],
     [256, 256]
 ]
 activation_options = ['gelu', 'tanh']
+experiment_name = 'Moons Torch CNF'
 
-
-# mlflow.set_experiment('Moons Torch CNF')
 
 # for i, (neurons, activation) in enumerate(product(neuron_options, activation_options)):
-#     logger.info(
-#         f'Running job: torch-cnf-moons-{i} | Hidden features: {neurons} | Activation: {activation}')
 #     job = MoonsTimeEmbeddingMLPCNFTorchJob(
 #         name=f'torch-cnf-moons-{i}',
 #         dataset=dataset,
@@ -118,102 +136,100 @@ activation_options = ['gelu', 'tanh']
 #     job.run()
 
 
-mlflow.set_experiment('Moons Zuko Hutchinson CNF')
-
-for i, (neurons, activation) in enumerate(product(neuron_options, activation_options)):
-    logger.info(
-        f'Running job: zuko-hutchinson-cnf-moons-{i} | Hidden features: {neurons} | Activation: {activation}')
-    job = MoonsZukoCNFJob(
-        name=f'zuko-hutchinson-cnf-moons-{i}',
-        dataset=dataset,
-        model=ZukoCNFModel(
-            features=2,
-            hidden_features=neurons,
-            activation=activation,
-            exact=False,
-            max_epochs=max_epochs,
-            checkpoint=dict(
-                monitor='val_loss',
-                mode='min',
-            ),
-            early_stopping=dict(
-                monitor='val_loss',
-                mode='min',
-                patience=3,
-                min_delta=1e-2,
-                stopping_threshold=-10
-            ),
-        )
-    )
-    job.run()
+experiment_name = 'Moons Zuko Hutchinson CNF'
 
 
-mlflow.set_experiment('Moons Real NVP')
+# for i, (neurons, activation) in enumerate(product(neuron_options, activation_options)):
+#     job = MoonsZukoCNFJob(
+#         name=f'zuko-hutchinson-cnf-moons-{i}',
+#         dataset=dataset,
+#         model=ZukoCNFModel(
+#             features=2,
+#             hidden_features=neurons,
+#             activation=activation,
+#             exact=False,
+#             max_epochs=max_epochs,
+#             checkpoint=dict(
+#                 monitor='val_loss',
+#                 mode='min',
+#             ),
+#             early_stopping=dict(
+#                 monitor='val_loss',
+#                 mode='min',
+#                 patience=3,
+#                 min_delta=1e-2,
+#                 stopping_threshold=-10
+#             ),
+#             learning_rate=learning_rate,
+#             accelerator=accelerator,
+#             enable_progress_bar=False
+#         )
+#     )
+#     jobs_to_run.append((job, experiment_name))
 
 
-for i, (neurons, activation) in enumerate(product(neuron_options, activation_options)):
-    logger.info(
-        f'Running job: real-nvp-moons-{i} | Hidden features: {neurons} | Activation: {activation}')
-    job = MoonsRealNVPJob(
-        name=f'real-nvp-moons-{i}',
-        dataset=dataset,
-        model=RealNVPModel(
-            features=2,
-            transforms=4,
-            hidden_features=neurons,
-            checkpoint=dict(
-                monitor='val_loss',
-                mode='min',
-            ),
-            early_stopping=dict(
-                monitor='val_loss',
-                mode='min',
-                patience=5,
-                min_delta=1e-3,
-                stopping_threshold=-10
-            ),
-            learning_rate=1e-3,
-            max_epochs=max_epochs,
-            activation=activation
-        )
-    )
-    job.run()
+experiment_name = 'Moons Real NVP'
 
 
-mlflow.set_experiment('Moons Zuko Exact CNF')
+# for i, (neurons, activation) in enumerate(product(neuron_options, activation_options)):
+#     job = MoonsRealNVPJob(
+#         name=f'real-nvp-moons-{i}',
+#         dataset=dataset,
+#         model=RealNVPModel(
+#             features=2,
+#             transforms=4,
+#             hidden_features=neurons,
+#             checkpoint=dict(
+#                 monitor='val_loss',
+#                 mode='min',
+#             ),
+#             early_stopping=dict(
+#                 monitor='val_loss',
+#                 mode='min',
+#                 patience=5,
+#                 min_delta=1e-2,
+#                 stopping_threshold=-10
+#             ),
+#             learning_rate=learning_rate,
+#             max_epochs=max_epochs,
+#             activation=activation,
+#             accelerator=accelerator,
+#             enable_progress_bar=False
+#         )
+#     )
+#     jobs_to_run.append((job, experiment_name))
 
-neuron_options = [
-    [64, 64],
-    [64, 64, 64, 64],
-    [256, 256]
-]
-activation_options = ['gelu', 'tanh']
-for i, (neurons, activation) in enumerate(product(neuron_options, activation_options)):
-    logger.info(
-        f'Running job: zuko-exact-cnf-moons-{i} | Hidden features: {neurons} | Activation: {activation}')
-    job = MoonsZukoCNFJob(
-        name=f'zuko-exact-cnf-moons-{i}',
-        dataset=dataset,
-        model=ZukoCNFModel(
-            features=2,
-            hidden_features=neurons,
-            activation=activation,
-            exact=True,
-            max_epochs=max_epochs,
-            checkpoint=dict(
-                monitor='val_loss',
-                mode='min',
-            ),
-            early_stopping=dict(
-                monitor='val_loss',
-                mode='min',
-                patience=3,
-                min_delta=1e-2,
-                stopping_threshold=-10
-            ),
-        )
-    )
-    job.run()
+
+experiment_name = 'Moons Zuko Exact CNF'
+
+
+# for i, (neurons, activation) in enumerate(product(neuron_options, activation_options)):
+#     job = MoonsZukoCNFJob(
+#         name=f'zuko-exact-cnf-moons-{i}',
+#         dataset=dataset,
+#         model=ZukoCNFModel(
+#             features=2,
+#             hidden_features=neurons,
+#             activation=activation,
+#             exact=True,
+#             max_epochs=max_epochs,
+#             checkpoint=dict(
+#                 monitor='val_loss',
+#                 mode='min',
+#             ),
+#             early_stopping=dict(
+#                 monitor='val_loss',
+#                 mode='min',
+#                 patience=3,
+#                 min_delta=1e-2,
+#                 stopping_threshold=-10
+#             ),
+#             learning_rate=learning_rate,
+#             accelerator=accelerator,
+#             enable_progress_bar=False
+#         )
+#     )
+#     jobs_to_run.append((job, experiment_name))
 
 
 # mlflow.set_experiment('Moons Exact CNF')
@@ -224,7 +240,6 @@ for i, (neurons, activation) in enumerate(product(neuron_options, activation_opt
 #     [8, 8]
 # ]
 # for i, (activation, neurons_per_layer) in enumerate(product(activation_options, neuron_options)):
-#     logger.info(f'Running job: exact-cnf-moons-{i}')
 #     job = MoonsTimeEmbeddingMLPCNFJob(
 #         name=f'exact-cnf-moons-{i}',
 #         dataset=dataset,
@@ -240,7 +255,6 @@ for i, (neurons, activation) in enumerate(product(neuron_options, activation_opt
 #             base_distribution='standard_normal',
 #             max_epochs=5,
 #             patience=1,
-#             verbose=True,
 #             min_delta=1,
 #             input_shape=(2,),
 #             monitor='val_loss',
@@ -253,7 +267,6 @@ for i, (neurons, activation) in enumerate(product(neuron_options, activation_opt
 # mlflow.set_experiment('Moons Hutchinson CNF')
 
 # for i, (activation, neurons_per_layer) in enumerate(product(activation_options, neuron_options)):
-#     logger.info(f'Running job: hutchinson-cnf-moons-{i}')
 #     job = MoonsTimeEmbeddingMLPCNFHutchinsonJob(
 #         name=f'hutchinson-cnf-moons-{i}',
 #         dataset=dataset,
@@ -269,7 +282,6 @@ for i, (neurons, activation) in enumerate(product(neuron_options, activation_opt
 #             base_distribution='standard_normal',
 #             max_epochs=5,
 #             patience=1,
-#             verbose=True,
 #             min_delta=1,
 #             monitor='val_loss',
 #             mode='min',
@@ -277,3 +289,16 @@ for i, (neurons, activation) in enumerate(product(neuron_options, activation_opt
 #         )
 #     )
 #     job.run()
+
+
+logs_dir = Path.home() / 'logs' / \
+    f'run_moons_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
+executor = submitit.AutoExecutor(folder=logs_dir)
+executor.update_parameters(slurm_array_parallelism=2,
+                           timeout_min=3*60,
+                           cpus_per_task=8,
+                           slurm_partition="gpu")
+with executor.batch():
+    for job, mlflow_experiment_name in jobs_to_run:
+        logger.info(f'Submitting job: {job.name}')
+        executor.submit(run_job, job, mlflow_experiment_name)
