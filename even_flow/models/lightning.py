@@ -263,6 +263,7 @@ class LightningModel(MLFlowLoggedModel):
     num_sanity_val_steps: int = 5
     enable_progress_bar: bool = True
     enable_model_summary: bool = True
+    max_time: dict[str, int | float] = {}
 
     checkpoint: ModelCheckpointConfig = ModelCheckpointConfig()
     early_stopping: EarlyStopping = EarlyStopping()
@@ -316,7 +317,8 @@ class LightningModel(MLFlowLoggedModel):
                 enable_progress_bar=self.enable_progress_bar,
                 enable_model_summary=self.enable_model_summary,
                 num_sanity_val_steps=self.num_sanity_val_steps,
-                profiler=profiler
+                profiler=profiler,
+                max_time=self.max_time
             )
 
             logger.debug('Starting training process...')
@@ -384,6 +386,8 @@ class LightningModel(MLFlowLoggedModel):
         mlflow.log_param(f"{prefix}enable_model_summary", self.enable_model_summary)
         mlflow.log_param(f"{prefix}num_sanity_val_steps",
                          self.num_sanity_val_steps)
+        for key, value in self.max_time.items():
+            mlflow.log_param(f"{prefix}max_time.{key}", value)
         self.checkpoint.to_mlflow(prefix=prefix + 'checkpoint')
         self.early_stopping.to_mlflow(prefix=prefix + 'early_stopping')
 
@@ -419,6 +423,15 @@ class LightningModel(MLFlowLoggedModel):
         kwargs['enable_model_summary'] = mlflow_run.data.params.get(
             f'{prefix}enable_model_summary',
             str(cls.model_fields['enable_model_summary'].default)).lower() == 'true'
+        max_time = {}
+        for param_key, param_value in mlflow_run.data.params.items():
+            if param_key.startswith(f'{prefix}max_time.'):
+                time_key = param_key.replace(f'{prefix}max_time.', '')
+                try:
+                    max_time[time_key] = int(param_value)
+                except ValueError:
+                    max_time[time_key] = float(param_value)
+        kwargs['max_time'] = max_time
         return kwargs
 
     @classmethod

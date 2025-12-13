@@ -64,7 +64,8 @@ class MNISTDataModule(L.LightningDataModule):
         self.transform = transforms.Compose(transformations)
 
         mnist_full = MNIST(self.data_dir, train=True,
-                           transform=self.transform)
+                           transform=self.transform,
+                           download=True)
         self.mnist_train, self.mnist_val = random_split(
             mnist_full, [55000, 5000], generator=torch.Generator().manual_seed(self.random_seed)
         )

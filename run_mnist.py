@@ -31,9 +31,9 @@ def run_job(job, mlflow_experiment_name):
 
 
 @app.command()
-def main(debug: bool = True):
+def main(debug: bool = False):
     jobs_to_run = []
-    max_epochs = 1
+    max_epochs = 100
     neuron_options = [
         [16, 16],
         [16, 16, 16, 16],
@@ -44,7 +44,7 @@ def main(debug: bool = True):
     activation_options = ['gelu', 'tanh']
     learning_rate = 1e-3
 
-    experiment_name = "MNIST RealNVP"
+    experiment_name = "MNIST RealNVP Smaller Learning Rate"
 
     for i, (neurons, activation) in enumerate(product(neuron_options, activation_options)):
         job = MNISTRealNVPJob(
@@ -63,22 +63,25 @@ def main(debug: bool = True):
                 early_stopping=dict(
                     monitor='val_loss',
                     mode='min',
-                    patience=5,
+                    patience=3,
                     min_delta=1e-3,
                     stopping_threshold=-10
                 ),
-                learning_rate=learning_rate,
+                learning_rate=1e-5,
                 accelerator='cpu',
-                enable_progress_bar=False
+                enable_progress_bar=False,
+                max_time={
+                    'hours': 12
+                }
             )
         )
         jobs_to_run.append((job, experiment_name))
 
-    experiment_name = 'Moons Zuko Hutchinson CNF'
+    experiment_name = 'MNIST Zuko Hutchinson CNF'
 
     for i, (neurons, activation) in enumerate(product(neuron_options, activation_options)):
         job = MNISTZukoCNFJob(
-            name=f'real-nvp-moons-{i}',
+            name=f'zuko-hutchinson-cnf-mnist-{i}',
             dataset=dataset,
             model=MNISTZukoCNFModel(
                 features=28*28,
@@ -90,7 +93,7 @@ def main(debug: bool = True):
                 early_stopping=dict(
                     monitor='val_loss',
                     mode='min',
-                    patience=5,
+                    patience=3,
                     min_delta=1e-2,
                     stopping_threshold=-10
                 ),
@@ -98,23 +101,29 @@ def main(debug: bool = True):
                 max_epochs=max_epochs,
                 activation=activation,
                 accelerator='cpu',
-                enable_progress_bar=False
+                enable_progress_bar=False,
+                exact=False,
+                max_time={
+                    'hours': 12
+                }
             )
         )
         jobs_to_run.append((job, experiment_name))
 
     logs_dir = Path.home() / 'logs' / \
-        f'run_moons_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
+        f'run_mnist_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
 
     if debug:
         executor = submitit.DebugExecutor(folder=logs_dir)
     else:
         executor = submitit.AutoExecutor(folder=logs_dir)
 
-    executor.update_parameters(slurm_array_parallelism=2,
-                               timeout_min=3*60,
+    executor.update_parameters(name="mnist_flow",
+                               slurm_array_parallelism=4,
+                               timeout_min=12*60 + 10,
                                cpus_per_task=8,
-                               slurm_partition="gpu")
+                               slurm_partition="gpu",
+                               stderr_to_stdout=True)
     with executor.batch():
         for job, mlflow_experiment_name in jobs_to_run:
             logger.info(f'Submitting job: {job.name}')

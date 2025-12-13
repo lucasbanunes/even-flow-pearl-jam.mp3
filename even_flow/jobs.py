@@ -76,6 +76,7 @@ class BaseJob(BaseModel, ABC):
               TemporaryDirectory() as tmp_dir):
             self.id_ = active_run.info.run_id
             self.name = active_run.data.tags['mlflow.runName']
+            logger.info(f'Running job with id: {self.id_} and name: {self.name}')
             exec_start = datetime.now(timezone.utc).timestamp()
             mlflow.log_metric("exec_start", exec_start)
             self._run(Path(tmp_dir), active_run)
