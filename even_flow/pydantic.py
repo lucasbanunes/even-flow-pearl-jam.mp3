@@ -81,10 +81,10 @@ class MLFlowLoggedModel(BaseModel, ABC):
     def from_mlflow(cls, mlflow_run: Run,
                     prefix: str = '') -> Self:
         kwargs = cls._from_mlflow(mlflow_run, prefix=prefix)
+        kwargs['id_'] = mlflow_run.info.run_id
+        kwargs['name'] = mlflow_run.data.tags.get('mlflow.runName', None)
+        kwargs['prefix'] = prefix
         instance = cls(**kwargs)
-        instance.id_ = mlflow_run.info.run_id
-        instance.name = mlflow_run.data.tags.get('mlflow.runName', None)
-        instance.prefix = prefix
         return instance
 
     @classmethod

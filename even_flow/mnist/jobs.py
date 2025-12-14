@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import ClassVar, Type
+from typing import Any, ClassVar, Type
 import mlflow
 from mlflow.entities import Run
 from mlflow.models.model import ModelInfo
@@ -110,8 +110,7 @@ class BaseMNISTJob(BaseJob, YamlBaseModel):
         mlflow.log_artifact(str(metrics_json))
 
     @classmethod
-    def _from_mlflow(cls, mlflow_run, prefix=''):
-        kwargs = {}
+    def _from_mlflow(cls, mlflow_run, prefix='', **kwargs) -> dict[str, Any]:
         kwargs['dataset'] = MNISTDataset.from_mlflow(
             mlflow_run, prefix=cls.DATASET_PREFIX)
         model_type: Type[MLFlowLoggedModel] = cls.model_fields['model'].annotation
@@ -119,7 +118,7 @@ class BaseMNISTJob(BaseJob, YamlBaseModel):
             mlflow_run, prefix=cls.MODEL_PREFIX)
         kwargs['metrics'] = load_json(mlflow_run.info.run_id,
                                       cls.METRICS_ARTIFACT_PATH)
-        return cls(**kwargs)
+        return kwargs
 
 
 class MNISTZukoCNFModel(ZukoCNFModel):

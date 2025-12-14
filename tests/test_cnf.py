@@ -13,7 +13,8 @@ def test_cnf_sample():
         solver='dopri5',
         atol=1e-5,
         rtol=1e-5,
-        input_shape=(2,)
+        input_shape=(2,),
+        max_time={}
     )
     base, transformed = cnf_model.sample(shape=(10,))
     assert base.shape == (10, 2), "Sample shape is incorrect."

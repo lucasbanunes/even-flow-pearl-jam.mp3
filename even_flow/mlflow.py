@@ -1,11 +1,9 @@
-from abc import ABC, abstractmethod
-from typing import Generator, Self, Any
+from typing import Generator, Any
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from contextlib import contextmanager
 import mlflow
 import json
-from mlflow.entities import Run
 
 
 @contextmanager
@@ -32,45 +30,6 @@ def tmp_artifact_download(run_id: str,
             artifact_path=artifact_path,
             dst_path=tmp_dir
         ))
-
-
-class MLFlowLoggedClass(ABC):
-
-    @abstractmethod
-    def _to_mlflow(self, prefix: str = '') -> None:
-        raise NotImplementedError(
-            "to_mlflow method must be implemented by subclasses.")
-
-    def to_mlflow(self, prefix: str = '') -> None:
-        self._to_mlflow(prefix=prefix)
-        active_run = mlflow.active_run()
-        if active_run is None:
-            raise RuntimeError("No active MLflow run found.")
-        self.id_ = active_run.info.run_id
-        self.name = active_run.data.tags.get('mlflow.runName', None)
-        self.prefix = prefix
-
-    @classmethod
-    @abstractmethod
-    def _from_mlflow(cls, mlflow_run: Run,
-                     prefix: str = '') -> Self:
-        raise NotImplementedError(
-            "from_mlflow method must be implemented by subclasses.")
-
-    @classmethod
-    def from_mlflow(cls, mlflow_run: Run,
-                    prefix: str = '') -> Self:
-        instance = cls._from_mlflow(mlflow_run, prefix=prefix)
-        instance.id_ = mlflow_run.info.run_id
-        instance.name = mlflow_run.data.tags.get('mlflow.runName', None)
-        return instance
-
-    @classmethod
-    def from_mlflow_run_id(cls, run_id: str, prefix: str = '') -> Self:
-        mlflow_client = mlflow.MlflowClient()
-        mlflow_run = mlflow_client.get_run(run_id)
-        instance = cls.from_mlflow(mlflow_run, prefix=prefix)
-        return instance
 
 
 def load_json(

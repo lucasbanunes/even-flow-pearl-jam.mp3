@@ -18,7 +18,7 @@ from .lightning import (
     LightningModel,
 )
 from ..torch import TORCH_MODULES
-from ..mlflow import MLFlowLoggedClass
+from ..pydantic import MLFlowLoggedModel
 
 
 type AdjointType = Annotated[
@@ -49,7 +49,7 @@ type RtolType = Annotated[
 ]
 
 type VectorFieldType = Annotated[
-    MLFlowLoggedClass,
+    MLFlowLoggedModel,
     Field(description="The vector field defining the CNF transformation.")
 ]
 
@@ -310,7 +310,7 @@ class CNFModel(LightningModel):
                                                                    cls.model_fields['learning_rate'].default))
         kwargs['input_shape'] = json.loads(
             mlflow_run.data.params[f'{prefix}input_shape'])
-        vector_field_type: Type[MLFlowLoggedClass] = cls.model_fields['vector_field'].annotation
+        vector_field_type: Type[MLFlowLoggedModel] = cls.model_fields['vector_field'].annotation
         kwargs['vector_field'] = vector_field_type.from_mlflow(
             mlflow_run,
             prefix=f'{prefix}vector_field'
@@ -755,7 +755,7 @@ class CNFTorchModel(TorchModel):
                                                                    cls.model_fields['learning_rate'].default))
         input_shape_str = mlflow_run.data.params[f'{prefix}input_shape']
         kwargs['input_shape'] = json.loads(input_shape_str)
-        vector_field_type: Type[MLFlowLoggedClass] = cls.model_fields['vector_field'].annotation
+        vector_field_type: Type[MLFlowLoggedModel] = cls.model_fields['vector_field'].annotation
         kwargs['vector_field'] = vector_field_type.from_mlflow(
             mlflow_run,
             prefix=f'{prefix}vector_field'

@@ -2,7 +2,7 @@ from abc import abstractmethod, ABC
 from collections import defaultdict
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Annotated, Self
+from typing import Annotated, Any, Self
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field, ConfigDict
 import mlflow
@@ -12,6 +12,7 @@ import numpy as np
 from mlflow.entities import Run
 
 from .utils import get_logger
+from .slurm import SlurmEnvironment
 
 DEFAULT_TRAINING_JOB_METRICS = {
     'train': {},
@@ -56,10 +57,13 @@ type RunType = Annotated[
 class BaseJob(BaseModel, ABC):
     """BaseModel with MLflow logging capabilities."""
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True,
+                              extra='forbid')
 
     id_: IdType = None
     name: NameType = None
+    prefix: str = ''
+    slurm: SlurmEnvironment = SlurmEnvironment()
     # mlflow_run: RunType = None
 
     @abstractmethod
@@ -76,9 +80,15 @@ class BaseJob(BaseModel, ABC):
               TemporaryDirectory() as tmp_dir):
             self.id_ = active_run.info.run_id
             self.name = active_run.data.tags['mlflow.runName']
-            logger.info(f'Running job with id: {self.id_} and name: {self.name}')
+            logger.info(
+                f'Running job with id: {self.id_} and name: {self.name}')
             exec_start = datetime.now(timezone.utc).timestamp()
             mlflow.log_metric("exec_start", exec_start)
+            if self.prefix:
+                prefix = f"{self.prefix}."
+            else:
+                prefix = ''
+            self.slurm.to_mlflow(prefix=f'{prefix}slurm')
             self._run(Path(tmp_dir), active_run)
             end_start = datetime.now(timezone.utc).timestamp()
             mlflow.log_metric('exec_end', end_start)
@@ -89,16 +99,20 @@ class BaseJob(BaseModel, ABC):
     @classmethod
     @abstractmethod
     def _from_mlflow(cls, mlflow_run: Run,
-                     prefix: str = '') -> Self:
+                     prefix: str = '') -> dict[str, Any]:
         raise NotImplementedError(
             "from_mlflow method must be implemented by subclasses.")
 
     @classmethod
     def from_mlflow(cls, mlflow_run: Run,
                     prefix: str = '') -> Self:
-        instance = cls._from_mlflow(mlflow_run, prefix=prefix)
-        instance.id_ = mlflow_run.info.run_id
-        instance.name = mlflow_run.data.tags.get('mlflow.runName', None)
+        kwargs = cls._from_mlflow(mlflow_run, prefix=prefix)
+        kwargs['id_'] = mlflow_run.info.run_id
+        kwargs['name'] = mlflow_run.data.tags.get('mlflow.runName', None)
+        kwargs['prefix'] = prefix
+        kwargs['slurm'] = SlurmEnvironment.from_mlflow(
+            mlflow_run, prefix=f'{prefix}slurm')
+        instance = cls(**kwargs)
         return instance
 
     @classmethod

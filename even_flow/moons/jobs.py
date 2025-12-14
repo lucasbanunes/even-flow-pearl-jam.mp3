@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Self, ClassVar, Type
+from typing import Any, ClassVar, Type
 from datetime import datetime, timezone
 from pydantic import ConfigDict
 import mlflow
@@ -17,7 +17,7 @@ from matplotlib.figure import Figure
 from .dataset import MoonsDataset
 from ..jobs import BaseJob, DEFAULT_TRAINING_JOB_METRICS
 from ..utils import get_logger
-from ..mlflow import MLFlowLoggedClass, load_json
+from ..mlflow import load_json
 from ..models.cnf import (
     TimeEmbeddingMLPCNFModel,
     TimeEmbeddingMLPCNFHutchinsonModel,
@@ -37,7 +37,7 @@ class BaseMoonsJob(BaseJob, YamlBaseModel):
     METRICS_ARTIFACT_PATH: ClassVar[str] = 'metrics.json'
 
     dataset: MoonsDataset = MoonsDataset()
-    model: MLFlowLoggedClass
+    model: MLFlowLoggedModel
     metrics: dict[str, dict[str, float | int]
                   ] = DEFAULT_TRAINING_JOB_METRICS.copy()
 
@@ -142,21 +142,20 @@ class BaseMoonsJob(BaseJob, YamlBaseModel):
         self.log_metrics(tmp_dir, model_info)
 
     @classmethod
-    def _from_mlflow(cls, mlflow_run: Run, prefix: str = '') -> Self:
+    def _from_mlflow(cls, mlflow_run: Run, prefix: str = '', **kwargs) -> dict[str, Any]:
         if prefix:
             prefix += "."
         metrics = load_json(mlflow_run.info.run_id,
                             cls.METRICS_ARTIFACT_PATH)
+        kwargs['metrics'] = metrics
         model_type: Type[MLFlowLoggedModel] = cls.model_fields['model'].annotation
-        return cls(
-            model=model_type.from_mlflow(
-                mlflow_run,
-                prefix=f'{prefix}{cls.MODEL_PREFIX}'
-            ),
-            dataset=MoonsDataset.from_mlflow(mlflow_run,
-                                             prefix=f'{prefix}{cls.DATASET_PREFIX}'),
-            metrics=metrics,
+        kwargs['model'] = model_type.from_mlflow(
+            mlflow_run,
+            prefix=f'{prefix}{cls.MODEL_PREFIX}'
         )
+        kwargs['dataset'] = MoonsDataset.from_mlflow(mlflow_run,
+                                                     prefix=f'{prefix}{cls.DATASET_PREFIX}')
+        return kwargs
 
     def log_metrics(self, tmp_dir: Path, model_info: ModelInfo):
         for dataset, metrics in self.metrics.items():

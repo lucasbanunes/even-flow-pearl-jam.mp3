@@ -215,6 +215,7 @@ mlruns/
 # Misc
 .data/
 logs/
+ignore/
 
 # Lightning
 lightning_logs/
