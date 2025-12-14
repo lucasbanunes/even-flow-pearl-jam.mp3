@@ -80,6 +80,7 @@ class BaseMoonsJob(BaseJob, YamlBaseModel):
         datamodule = self.dataset.as_lightning_datamodule()
         fit_response = self.model.fit(
             datamodule, prefix=self.MODEL_PREFIX)
+
         if isinstance(fit_response, ModelInfo):
             model_info = fit_response
         elif len(fit_response) == 1:
@@ -90,7 +91,9 @@ class BaseMoonsJob(BaseJob, YamlBaseModel):
             raise ValueError(
                 'Unexpected fit response from model.fit() method.')
         fit_end = datetime.now(timezone.utc)
-        mlflow.log_metric('fit_end', fit_end.timestamp())
+
+        mlflow.log_metric('fit_end', fit_end.timestamp(),
+                          model_id=model_info.model_id)
         mlflow.log_metric(
             "fit_duration", (fit_end - fit_start).total_seconds(),
             model_id=model_info.model_id
@@ -265,6 +268,27 @@ class MoonsZukoCNFJob(BaseMoonsJob):
                               extra='forbid')
 
     model: ZukoCNFModel
+
+    def vector_field_plot(self,
+                          x: torch.Tensor,
+                          y: torch.Tensor,
+                          t: float,
+                          colorbar: bool = True,
+                          ax: Axes = None,
+                          cmap: str = 'coolwarm') -> Axes:
+        if ax is None:
+            ax = plt.gca()
+        vector_field = self.model.lightning_module.model().transform.f
+        quiver_plot(
+            x=x,
+            y=y,
+            vector_field=lambda t, x: -vector_field(t, x),
+            t=t,
+            ax=ax,
+            colorbar=colorbar,
+            cmap=cmap
+        )
+        return ax
 
 
 class MoonsTimeEmbeddingMLPCNFTorchJob(BaseMoonsJob):

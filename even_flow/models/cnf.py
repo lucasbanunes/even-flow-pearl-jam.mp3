@@ -112,9 +112,9 @@ class CNF(L.LightningModule):
         return metrics
 
     def forward(self, z0: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        div0 = self.compute_divergence(self.integration_times[0],
-                                       z0)
-        # div0 = torch.zeros(z0.shape[0], 1, dtype=z0.dtype)
+        # div0 = self.compute_divergence(self.integration_times[0],
+        #                                z0)
+        div0 = torch.zeros(z0.shape[0], 1, dtype=z0.dtype)
 
         z, int_div = odeint_adjoint(
             self.augmented_function,
@@ -123,7 +123,7 @@ class CNF(L.LightningModule):
             method=self.solver,
             atol=self.atol,
             rtol=self.rtol,
-            adjoint_params=self.vector_field.parameters()
+            adjoint_params=tuple(self.vector_field.parameters())
         )
         return z[-1], int_div[-1]
 
@@ -139,7 +139,8 @@ class CNF(L.LightningModule):
                            t: torch.Tensor,
                            z: torch.Tensor) -> torch.Tensor:
         with torch.enable_grad():
-            z = z.clone().requires_grad_(True)
+            if not z.requires_grad:
+                z = z.clone().requires_grad_(True)
             dzdt = self.vector_field.forward(t, z)
             grad_outputs = torch.eye(
                 z.shape[-1], dtype=z.dtype, device=z.device)

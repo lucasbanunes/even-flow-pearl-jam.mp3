@@ -352,7 +352,7 @@ class LightningModel(MLFlowLoggedModel):
         lightning_mlflow_logger = MLFlowLogger(
             run_name=active_run.data.tags['mlflow.runName'],
             run_id=active_run.info.run_id,
-            tracking_uri=mlflow.mlflow.get_tracking_uri(),
+            tracking_uri=mlflow.get_tracking_uri(),
             experiment_name=experiment.name
         )
         return lightning_mlflow_logger
