@@ -301,7 +301,7 @@ for i, (activation, neurons_per_layer) in enumerate(product(activation_options, 
 #     job.run()
 
 
-logs_dir = Path.home() / 'logs' / \
+logs_dir = Path(__file__).parent / 'logs' / \
     f'run_moons_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
 executor = submitit.AutoExecutor(folder=logs_dir)
 executor.update_parameters(slurm_array_parallelism=4,

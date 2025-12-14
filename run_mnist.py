@@ -110,7 +110,7 @@ def main(debug: bool = False):
         )
         jobs_to_run.append((job, experiment_name))
 
-    logs_dir = Path.home() / 'logs' / \
+    logs_dir = Path(__file__).parent / 'logs' / \
         f'run_mnist_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
 
     if debug:
