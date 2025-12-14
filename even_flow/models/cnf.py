@@ -250,6 +250,13 @@ class CNFHutchingson(CNF):
         return z, divergence.reshape(-1, 1)
 
 
+type TraceScaleType = Annotated[
+    float,
+    Field(description="Scaling factor for the divergence estimate.",
+          gt=0)
+]
+
+
 class CNFModel(LightningModel):
 
     LIGHTNING_MODULE_ARTIFACT_PATH: ClassVar[str] = 'CNF.ckpt'
@@ -264,6 +271,7 @@ class CNFModel(LightningModel):
     rtol: RtolType = 1e-5
     learning_rate: LearningRateType = 1e-3
     input_shape: tuple[int, ...]
+    div_scale: TraceScaleType = 1e-2
 
     lightning_module: Annotated[
         CNF | None,
@@ -285,6 +293,7 @@ class CNFModel(LightningModel):
         mlflow.log_param(f'{prefix}.rtol', self.rtol)
         mlflow.log_param(f'{prefix}.learning_rate', self.learning_rate)
         mlflow.log_param(f'{prefix}.input_shape', json.dumps(self.input_shape))
+        mlflow.log_param(f'{prefix}.div_scale', self.div_scale)
 
     @classmethod
     def _from_mlflow(cls, mlflow_run, prefix='', **kwargs) -> dict[str, Any]:
@@ -315,6 +324,8 @@ class CNFModel(LightningModel):
             mlflow_run,
             prefix=f'{prefix}vector_field'
         )
+        kwargs['div_scale'] = float(mlflow_run.data.params.get(f'{prefix}div_scale',
+                                                               cls.model_fields['div_scale'].default))
         return kwargs
 
     def sample(self, shape: tuple[int]) -> torch.Tensor:
