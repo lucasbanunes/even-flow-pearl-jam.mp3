@@ -232,7 +232,7 @@ activation_options = ['gelu', 'tanh']
 #     jobs_to_run.append((job, experiment_name))
 
 
-experiment_name = 'Moons Exact CNF'
+experiment_name = 'Moons Exact CNF Tuple Adjoint Parameters'
 
 neuron_options = [
     [2, 2],
@@ -253,7 +253,7 @@ for i, (activation, neurons_per_layer) in enumerate(product(activation_options, 
             ),
             adjoint=True,
             base_distribution='standard_normal',
-            max_epochs=5,
+            max_epochs=max_epochs,
             checkpoint=dict(
                 monitor='val_loss',
                 mode='min',
@@ -268,7 +268,10 @@ for i, (activation, neurons_per_layer) in enumerate(product(activation_options, 
             input_shape=(2,),
             accelerator=accelerator,
             enable_progress_bar=False,
-            learning_rate=learning_rate
+            learning_rate=learning_rate,
+            max_time=dict(
+                hours=11
+            )
         )
     )
     jobs_to_run.append((job, experiment_name))
@@ -304,10 +307,14 @@ for i, (activation, neurons_per_layer) in enumerate(product(activation_options, 
 logs_dir = Path(__file__).parent / 'logs' / \
     f'run_moons_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
 executor = submitit.AutoExecutor(folder=logs_dir)
-executor.update_parameters(slurm_array_parallelism=4,
-                           timeout_min=3*60,
-                           cpus_per_task=8,
-                           slurm_partition="gpu")
+executor.update_parameters(
+    name="run_moons",
+    slurm_array_parallelism=4,
+    timeout_min=12*60,
+    cpus_per_task=8,
+    slurm_partition="gpu",
+    stderr_to_stdout=True
+)
 with executor.batch():
     for job, mlflow_experiment_name in jobs_to_run:
         logger.info(f'Submitting job: {job.name}')
