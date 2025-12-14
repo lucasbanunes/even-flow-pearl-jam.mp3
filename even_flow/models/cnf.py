@@ -93,6 +93,7 @@ class CNF(L.LightningModule):
         self.atol = model_config.atol
         self.rtol = model_config.rtol
         self.learning_rate = model_config.learning_rate
+        self.div_scale = torch.FloatTensor([model_config.div_scale])
 
         self.train_metrics = MetricCollection({
             'loss': MeanMetric()
@@ -157,7 +158,7 @@ class CNF(L.LightningModule):
     def log_prob(self, z0: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         zf, div_int = self.forward(z0)
         logp_zf = self.base_distribution.log_prob(zf).reshape(-1, 1)
-        return zf, div_int, logp_zf - div_int
+        return zf, div_int, logp_zf - self.div_scale*div_int
 
     def training_step(self,
                       batch: tuple[torch.Tensor],
