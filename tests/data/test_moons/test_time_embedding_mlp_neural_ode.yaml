@@ -21,3 +21,5 @@ model:
     monitor: val_loss
     mode: min
   max_epochs: 3
+  max_time:
+    minutes: 5

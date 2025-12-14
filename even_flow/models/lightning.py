@@ -83,7 +83,14 @@ type SaveTopKType = Annotated[
 
 type ProfilerType = Annotated[
     Literal['simple', 'advanced'] | None,
-    Field(description="The profiler to use during training")
+    Field(description="The profiler to use during training.\nCheck: https://lightning.ai/docs/pytorch/stable/common/trainer.html#max-time")
+]
+
+type MaxTimeType = Annotated[
+    dict[str, int | float],
+    Field(
+        description="Maximum time limits for training (e.g., {'minutes': 30})"
+    )
 ]
 
 
@@ -263,7 +270,7 @@ class LightningModel(MLFlowLoggedModel):
     num_sanity_val_steps: int = 5
     enable_progress_bar: bool = True
     enable_model_summary: bool = True
-    max_time: dict[str, int | float] = {}
+    max_time: MaxTimeType
 
     checkpoint: ModelCheckpointConfig = ModelCheckpointConfig()
     early_stopping: EarlyStopping = EarlyStopping()

@@ -8,3 +8,5 @@ model:
   hidden_features: [64, 64]
   activation: relu
   max_epochs: 3
+  max_time:
+    minutes: 5
