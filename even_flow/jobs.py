@@ -88,6 +88,9 @@ class BaseJob(BaseModel, ABC):
                 prefix = f"{self.prefix}."
             else:
                 prefix = ''
+            # Resets to catch the run time env variables to avoid logging
+            # predefined wrong values
+            self.slurm = SlurmEnvironment()
             self.slurm.to_mlflow(prefix=f'{prefix}slurm')
             self._run(Path(tmp_dir), active_run)
             end_start = datetime.now(timezone.utc).timestamp()
@@ -110,6 +113,8 @@ class BaseJob(BaseModel, ABC):
         kwargs['id_'] = mlflow_run.info.run_id
         kwargs['name'] = mlflow_run.data.tags.get('mlflow.runName', None)
         kwargs['prefix'] = prefix
+        if prefix:
+            prefix += '.'
         kwargs['slurm'] = SlurmEnvironment.from_mlflow(
             mlflow_run, prefix=f'{prefix}slurm')
         instance = cls(**kwargs)
