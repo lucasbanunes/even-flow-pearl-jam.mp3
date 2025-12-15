@@ -171,7 +171,7 @@ class CNF(L.LightningModule):
             torch.Tensor]:
         zf, int_div = self.forward(z0)
         logp_zf = self.base_distribution.log_prob(zf).reshape(-1, 1)
-        mean_logp_z0 = (logp_zf - int_div).mean()
+        mean_logp_z0 = (logp_zf + int_div).mean()
         mean_int_div = int_div.mean()
         zf_mean = zf.mean()
         z0_mean = z0.mean()
