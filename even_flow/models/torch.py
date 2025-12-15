@@ -81,7 +81,7 @@ class TorchModel(MLFlowLoggedModel):
     early_stopping: EarlyStopping = EarlyStopping()
 
     torch_module: Annotated[
-        nn.Module | None,
+        BaseNNModule | None,
         Field(
             description="The underlying Torch module. If None, it will be created when accessed."
         )

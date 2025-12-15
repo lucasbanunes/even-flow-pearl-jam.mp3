@@ -98,10 +98,8 @@ class CNF(L.LightningModule):
         self.train_metrics = MetricCollection({
             'loss': MeanMetric(),
             'int_div': MeanMetric(),
-            'scaled_int_div': MeanMetric(),
             'logp_zf': MeanMetric(),
             'logp_z0': MeanMetric(),
-            'scaled_logp_z0': MeanMetric(),
             'zf': MeanMetric(),
             'z0': MeanMetric()
         })
@@ -133,7 +131,7 @@ class CNF(L.LightningModule):
             rtol=self.rtol,
             adjoint_params=tuple(self.vector_field.parameters())
         )
-        return z[-1], div_int[-1]
+        return z[-1], div_int[-1]/self.div_scale
 
     def augmented_function(self,
                            t: torch.Tensor,
@@ -141,7 +139,7 @@ class CNF(L.LightningModule):
         z, _ = state
         divergence = self.compute_divergence(t, z)
 
-        return z, divergence.reshape(-1, 1)
+        return z, divergence.reshape(-1, 1) * self.div_scale
 
     def compute_divergence(self,
                            t: torch.Tensor,
@@ -153,59 +151,50 @@ class CNF(L.LightningModule):
             grad_outputs = torch.eye(
                 z.shape[-1], dtype=z.dtype, device=z.device)
             grad_outputs = grad_outputs.expand(*z.shape, -1).movedim(-1, 0)
-            (jacobian,) = torch.autograd.grad(
+            jacobian = torch.autograd.grad(
                 dzdt, z,
                 grad_outputs=grad_outputs,
                 create_graph=True, is_grads_batched=True
-            )
+            )[0]
             divergence = torch.einsum("i...i", jacobian)
 
         return divergence.reshape(-1, 1)
 
     def base_step(self,
-        z0: torch.Tensor
-    ) -> tuple[
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor]:
+                  z0: torch.Tensor
+                  ) -> tuple[
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor]:
         zf, int_div = self.forward(z0)
         logp_zf = self.base_distribution.log_prob(zf).reshape(-1, 1)
-        scaled_int_div = self.div_scale * int_div
         mean_logp_z0 = (logp_zf - int_div).mean()
-        scaled_mean_logp_z0 = (logp_zf - scaled_int_div).mean()
         mean_int_div = int_div.mean()
-        scaled_mean_int_div = self.div_scale * mean_int_div
         zf_mean = zf.mean()
         z0_mean = z0.mean()
         mean_logp_zf = logp_zf.mean()
-        loss = -scaled_mean_logp_z0
-        return loss, mean_logp_z0, scaled_mean_logp_z0, mean_logp_zf, mean_int_div, scaled_mean_int_div, zf_mean, z0_mean
+        loss = -mean_logp_z0
+        return loss, mean_logp_z0, mean_logp_zf, mean_int_div, zf_mean, z0_mean
 
     def training_step(self,
                       batch: tuple[torch.Tensor],
                       batch_idx: torch.Tensor):
-        loss, mean_logp_z0, scaled_mean_logp_z0, mean_logp_zf, mean_int_div, scaled_mean_int_div, zf_mean, z0_mean = \
+        loss, mean_logp_z0, mean_logp_zf, mean_int_div, zf_mean, z0_mean = \
             self.base_step(batch[0])
 
         self.log("train_loss", loss, on_epoch=True, prog_bar=True)
         self.log('train_logp_z0', mean_logp_z0, on_epoch=True, prog_bar=True)
-        self.log('train_scaled_logp_z0', scaled_mean_logp_z0, on_epoch=True, prog_bar=True)
         self.log('train_logp_zf', mean_logp_zf, on_epoch=True, prog_bar=True)
         self.log("train_int_div", mean_int_div, on_epoch=True, prog_bar=True)
-        self.log('train_scaled_int_div', scaled_mean_int_div, on_epoch=True, prog_bar=True)
         self.log("train_zf", zf_mean, on_epoch=True, prog_bar=True)
         self.log("train_z0", z0_mean, on_epoch=True, prog_bar=True)
         self.train_metrics['loss'].update(loss)
         self.train_metrics['logp_z0'].update(mean_logp_z0)
-        self.train_metrics['scaled_logp_z0'].update(scaled_mean_logp_z0)
         self.train_metrics['logp_zf'].update(mean_logp_zf)
         self.train_metrics['int_div'].update(mean_int_div)
-        self.train_metrics['scaled_int_div'].update(scaled_mean_int_div)
         self.train_metrics['zf'].update(zf_mean)
         self.train_metrics['z0'].update(z0_mean)
         return loss
@@ -217,14 +206,12 @@ class CNF(L.LightningModule):
     def validation_step(self,
                         batch: tuple[torch.Tensor],
                         batch_idx: torch.Tensor):
-        loss, mean_logp_z0, scaled_mean_logp_z0, mean_logp_zf, mean_int_div, scaled_mean_int_div, zf_mean, z0_mean = \
+        loss, mean_logp_z0, mean_logp_zf, mean_int_div, zf_mean, z0_mean = \
             self.base_step(batch[0])
         self.val_metrics['loss'].update(loss)
         self.val_metrics['logp_z0'].update(mean_logp_z0)
-        self.val_metrics['scaled_logp_z0'].update(scaled_mean_logp_z0)
         self.val_metrics['logp_zf'].update(mean_logp_zf)
         self.val_metrics['int_div'].update(mean_int_div)
-        self.val_metrics['scaled_int_div'].update(scaled_mean_int_div)
         self.val_metrics['zf'].update(zf_mean)
         self.val_metrics['z0'].update(z0_mean)
 
@@ -238,14 +225,12 @@ class CNF(L.LightningModule):
     def test_step(self,
                   batch: tuple[torch.Tensor],
                   batch_idx: torch.Tensor):
-        loss, mean_logp_z0, scaled_mean_logp_z0, mean_logp_zf, mean_int_div, scaled_mean_int_div, zf_mean, z0_mean = \
+        loss, mean_logp_z0, mean_logp_zf, mean_int_div, zf_mean, z0_mean = \
             self.base_step(batch[0])
         self.test_metrics['loss'].update(loss)
         self.test_metrics['logp_z0'].update(mean_logp_z0)
-        self.test_metrics['scaled_logp_z0'].update(scaled_mean_logp_z0)
         self.test_metrics['logp_zf'].update(mean_logp_zf)
         self.test_metrics['int_div'].update(mean_int_div)
-        self.test_metrics['scaled_int_div'].update(scaled_mean_int_div)
         self.test_metrics['zf'].update(zf_mean)
         self.test_metrics['z0'].update(z0_mean)
 
@@ -307,7 +292,8 @@ class CNFHutchingson(CNF):
 type TraceScaleType = Annotated[
     float,
     Field(description="Scaling factor for the divergence estimate.",
-          gt=0)
+          gt=0,
+          le=1)
 ]
 
 
@@ -325,7 +311,7 @@ class CNFModel(LightningModel):
     rtol: RtolType = 1e-5
     learning_rate: LearningRateType = 1e-3
     input_shape: tuple[int, ...]
-    div_scale: TraceScaleType = 1e2
+    div_scale: TraceScaleType = 1e-2
 
     lightning_module: Annotated[
         CNF | None,
