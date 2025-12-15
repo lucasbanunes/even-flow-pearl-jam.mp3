@@ -96,7 +96,14 @@ class CNF(L.LightningModule):
         self.div_scale = torch.FloatTensor([model_config.div_scale])
 
         self.train_metrics = MetricCollection({
-            'loss': MeanMetric()
+            'loss': MeanMetric(),
+            'int_div': MeanMetric(),
+            'scaled_int_div': MeanMetric(),
+            'logp_zf': MeanMetric(),
+            'logp_z0': MeanMetric(),
+            'scaled_logp_z0': MeanMetric(),
+            'zf': MeanMetric(),
+            'z0': MeanMetric()
         })
         self.val_metrics = self.train_metrics.clone()
         self.test_metrics = self.val_metrics.clone()
@@ -117,7 +124,7 @@ class CNF(L.LightningModule):
         #                                z0)
         div0 = torch.zeros(z0.shape[0], 1, dtype=z0.dtype)
 
-        z, int_div = odeint_adjoint(
+        z, div_int = odeint_adjoint(
             self.augmented_function,
             (z0, div0),
             self.integration_times.type_as(z0),
@@ -126,7 +133,7 @@ class CNF(L.LightningModule):
             rtol=self.rtol,
             adjoint_params=tuple(self.vector_field.parameters())
         )
-        return z[-1], int_div[-1]
+        return z[-1], div_int[-1]
 
     def augmented_function(self,
                            t: torch.Tensor,
@@ -158,14 +165,37 @@ class CNF(L.LightningModule):
     def log_prob(self, z0: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         zf, div_int = self.forward(z0)
         logp_zf = self.base_distribution.log_prob(zf).reshape(-1, 1)
-        return zf, div_int, logp_zf - self.div_scale*div_int
+        return zf, div_int, logp_zf
 
     def training_step(self,
                       batch: tuple[torch.Tensor],
                       batch_idx: torch.Tensor):
-        _, _, log_prob = self.log_prob(batch[0])
-        loss = -log_prob.mean()
+        zf, int_div, logp_zf = self.log_prob(batch[0])
+        scaled_int_div = self.div_scale * int_div
+        mean_logp_z0 = (logp_zf - int_div).mean()
+        scaled_mean_logp_z0 = (logp_zf - scaled_int_div).mean()
+        mean_int_div = int_div.mean()
+        scaled_mean_int_div = self.div_scale * mean_int_div
+        zf_mean = zf.mean()
+        z0_mean = batch[0].mean()
+        mean_logp_zf = logp_zf.mean()
+        loss = -scaled_mean_logp_z0
         self.log("train_loss", loss, on_epoch=True, prog_bar=True)
+        self.log('train_logp_z0', mean_logp_z0, on_epoch=True, prog_bar=True)
+        self.log('train_scaled_logp_z0', scaled_mean_logp_z0, on_epoch=True, prog_bar=True)
+        self.log('train_logp_zf', mean_logp_zf, on_epoch=True, prog_bar=True)
+        self.log("train_int_div", mean_int_div, on_epoch=True, prog_bar=True)
+        self.log('train_scaled_int_div', scaled_mean_int_div, on_epoch=True, prog_bar=True)
+        self.log("train_zf", zf_mean, on_epoch=True, prog_bar=True)
+        self.log("train_z0", z0_mean, on_epoch=True, prog_bar=True)
+        self.train_metrics['loss'].update(loss)
+        self.train_metrics['logp_z0'].update(mean_logp_z0)
+        self.train_metrics['scaled_logp_z0'].update(scaled_mean_logp_z0)
+        self.train_metrics['logp_zf'].update(mean_logp_zf)
+        self.train_metrics['int_div'].update(mean_int_div)
+        self.train_metrics['scaled_int_div'].update(scaled_mean_int_div)
+        self.train_metrics['zf'].update(zf_mean)
+        self.train_metrics['z0'].update(z0_mean)
         return loss
 
     def on_train_epoch_end(self):
@@ -175,9 +205,24 @@ class CNF(L.LightningModule):
     def validation_step(self,
                         batch: tuple[torch.Tensor],
                         batch_idx: torch.Tensor):
-        _, _, log_prob = self.log_prob(batch[0])
-        loss = -log_prob.mean()
-        self.val_metrics.update(loss)
+        zf, int_div, logp_zf = self.log_prob(batch[0])
+        scaled_int_div = self.div_scale * int_div
+        mean_logp_z0 = (logp_zf - int_div).mean()
+        scaled_mean_logp_z0 = (logp_zf - scaled_int_div).mean()
+        mean_int_div = int_div.mean()
+        scaled_mean_int_div = self.div_scale * mean_int_div
+        zf_mean = zf.mean()
+        z0_mean = batch[0].mean()
+        mean_logp_zf = logp_zf.mean()
+        loss = -scaled_mean_logp_z0
+        self.val_metrics['loss'].update(loss)
+        self.val_metrics['logp_z0'].update(mean_logp_z0)
+        self.val_metrics['scaled_logp_z0'].update(scaled_mean_logp_z0)
+        self.val_metrics['logp_zf'].update(mean_logp_zf)
+        self.val_metrics['int_div'].update(mean_int_div)
+        self.val_metrics['scaled_int_div'].update(scaled_mean_int_div)
+        self.val_metrics['zf'].update(zf_mean)
+        self.val_metrics['z0'].update(z0_mean)
 
     def on_validation_epoch_end(self):
         metric_values = self.val_metrics.compute()
@@ -189,12 +234,24 @@ class CNF(L.LightningModule):
     def test_step(self,
                   batch: tuple[torch.Tensor],
                   batch_idx: torch.Tensor):
-        _, _, log_prob = self.log_prob(batch[0])
-        loss = -log_prob.mean()
-        self.test_metrics.update(loss)
-
-    def on_test_epoch_end(self):
-        self.test_metrics.reset()
+        zf, int_div, logp_zf = self.log_prob(batch[0])
+        scaled_int_div = self.div_scale * int_div
+        mean_logp_z0 = (logp_zf - int_div).mean()
+        scaled_mean_logp_z0 = (logp_zf - scaled_int_div).mean()
+        mean_int_div = int_div.mean()
+        scaled_mean_int_div = self.div_scale * mean_int_div
+        zf_mean = zf.mean()
+        z0_mean = batch[0].mean()
+        mean_logp_zf = logp_zf.mean()
+        loss = -scaled_mean_logp_z0
+        self.test_metrics['loss'].update(loss)
+        self.test_metrics['logp_z0'].update(mean_logp_z0)
+        self.test_metrics['scaled_logp_z0'].update(scaled_mean_logp_z0)
+        self.test_metrics['logp_zf'].update(mean_logp_zf)
+        self.test_metrics['int_div'].update(mean_int_div)
+        self.test_metrics['scaled_int_div'].update(scaled_mean_int_div)
+        self.test_metrics['zf'].update(zf_mean)
+        self.test_metrics['z0'].update(z0_mean)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(
@@ -272,7 +329,7 @@ class CNFModel(LightningModel):
     rtol: RtolType = 1e-5
     learning_rate: LearningRateType = 1e-3
     input_shape: tuple[int, ...]
-    div_scale: TraceScaleType = 1e-2
+    div_scale: TraceScaleType = 1e2
 
     lightning_module: Annotated[
         CNF | None,
@@ -430,13 +487,6 @@ class ZukoCNFLightningModule(L.LightningModule):
         loss = -log_prob.mean()
         self.test_metrics.update(loss)
         return loss
-
-    def on_test_epoch_end(self):
-        metric_values = self.test_metrics.compute()
-        for name, value in metric_values.items():
-            self.log(f"test_{name}", value, prog_bar=True)
-        # Reset metrics after each epoch
-        self.test_metrics.reset()
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(

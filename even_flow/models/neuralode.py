@@ -176,13 +176,6 @@ class NeuralODEModule(L.LightningModule):
         self.test_metrics.update(loss)
         return loss
 
-    def on_test_epoch_end(self):
-        metric_values = self.test_metrics.compute()
-        for name, value in metric_values.items():
-            self.log(f"test_{name}", value, prog_bar=True)
-        # Reset metrics after each epoch
-        self.test_metrics.reset()
-
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(
             self.parameters(),
