@@ -1,10 +1,10 @@
 from even_flow.utils import set_logger
 from even_flow.moons.jobs import (
-    MoonsTimeEmbeddingMLPCNFJob,
+    MoonsTimeEmbeddingMLPCNFTorchJob,
 )
 from even_flow.moons.dataset import MoonsDataset
 from even_flow.models.cnf import (
-    TimeEmbeddingMLPCNFModel,
+    TimeEmbeddingMLPCNFTorchModel,
 )
 from itertools import product
 import mlflow
@@ -78,11 +78,9 @@ def main(
 ):
     jobs_to_run = []
 
-    experiment_name = 'Moons Exact CNF Corrected Div Scale'
+    experiment_name = 'Moons Exact CNF Torch'
     experiment_description = """
-    CNF treinado no conjunto MOONS. Implementado com o div scale corrigido. Anteriormente havia feito testes com valores muito pequenos.
-    Primeira implementação com log de todas as métricas intermediárias para cálculo do logp da distribuição alvo para debug.
-    """
+CNF treinado no conjunto MOONS usando Torch vanilla como backend."""
     mlflow_client.create_experiment(
         experiment_name,
         tags={"mlflow.note.content": experiment_description}
@@ -93,18 +91,17 @@ def main(
         [16, 16, 16, 16],
         [64, 64],
         [64, 64, 64, 64],
-        [256, 256]
+        # [256, 256]
     ]
     activation_options = ['gelu', 'tanh']
     max_epochs = 50
     learning_rate = 1e-3
-    accelerator = 'cpu'
 
     for i, (activation, neurons_per_layer) in enumerate(product(activation_options, neuron_options)):
-        job = MoonsTimeEmbeddingMLPCNFJob(
-            name=f'exact-cnf-moons-{i}',
+        job = MoonsTimeEmbeddingMLPCNFTorchJob(
+            name=f'exact-cnf-moons-torch-{i}',
             dataset=dataset,
-            model=TimeEmbeddingMLPCNFModel(
+            model=TimeEmbeddingMLPCNFTorchModel(
                 vector_field=dict(
                     input_dims=2,
                     time_embed_dims=16,
@@ -115,10 +112,8 @@ def main(
                 adjoint=True,
                 base_distribution='standard_normal',
                 max_epochs=max_epochs,
-                checkpoint=dict(
-                    monitor='val_loss',
-                    mode='min',
-                ),
+                input_shape=(2,),
+                learning_rate=learning_rate,
                 early_stopping=dict(
                     monitor='val_loss',
                     mode='min',
@@ -126,13 +121,6 @@ def main(
                     min_delta=1e-2,
                     stopping_threshold=-10
                 ),
-                input_shape=(2,),
-                accelerator=accelerator,
-                enable_progress_bar=False,
-                learning_rate=learning_rate,
-                max_time=dict(
-                    hours=11
-                )
             )
         )
         jobs_to_run.append((job, experiment_name))
