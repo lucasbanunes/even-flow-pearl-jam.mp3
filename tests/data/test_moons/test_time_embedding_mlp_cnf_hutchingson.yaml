@@ -26,3 +26,4 @@ model:
   max_epochs: 3
   max_time:
     minutes: 5
+  gradient_clip_val: 1.0

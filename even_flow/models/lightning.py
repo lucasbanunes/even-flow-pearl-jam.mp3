@@ -1,3 +1,4 @@
+from numbers import Number
 from typing import Annotated, Any, Literal, ClassVar, Self, Type
 from pydantic import Field, PrivateAttr
 from pathlib import Path
@@ -180,14 +181,17 @@ class EarlyStopping(MLFlowLoggedModel):
             stopping_threshold=self.stopping_threshold
         )
 
-    def should_stop(self, current: float) -> bool:
+    def should_stop_dict(self, metrics: dict[str, Number]) -> bool:
+        return self.should_stop(metrics[self.monitor])
+
+    def should_stop(self, current: Number) -> bool:
         if self.mode == 'min':
             return self.should_stop_min(current)
         else:  # mode == 'max'
             return self.should_stop_max(current)
 
-    def should_stop_min(self, current: float) -> bool:
-        if current <= self.stopping_threshold:
+    def should_stop_min(self, current: Number) -> bool:
+        if self.stopping_threshold is not None and current <= self.stopping_threshold:
             return True
 
         diff = self._best - current
@@ -202,8 +206,8 @@ class EarlyStopping(MLFlowLoggedModel):
             else:
                 return False
 
-    def should_stop_max(self, current: float) -> bool:
-        if current >= self.stopping_threshold:
+    def should_stop_max(self, current: Number) -> bool:
+        if self.stopping_threshold is not None and current >= self.stopping_threshold:
             return True
 
         diff = current - self._best
@@ -271,6 +275,7 @@ class LightningModel(MLFlowLoggedModel):
     enable_progress_bar: bool = True
     enable_model_summary: bool = True
     max_time: MaxTimeType
+    gradient_clip_val: float | None = None
 
     checkpoint: ModelCheckpointConfig = ModelCheckpointConfig()
     early_stopping: EarlyStopping = EarlyStopping()
@@ -325,7 +330,8 @@ class LightningModel(MLFlowLoggedModel):
                 enable_model_summary=self.enable_model_summary,
                 num_sanity_val_steps=self.num_sanity_val_steps,
                 profiler=profiler,
-                max_time=self.max_time
+                max_time=self.max_time,
+                gradient_clip_val=self.gradient_clip_val
             )
 
             logger.debug('Starting training process...')
@@ -389,14 +395,17 @@ class LightningModel(MLFlowLoggedModel):
         mlflow.log_param(f"{prefix}accelerator", self.accelerator)
         mlflow.log_param(f"{prefix}profiler", self.profiler)
         mlflow.log_param(f"{prefix}max_epochs", self.max_epochs)
-        mlflow.log_param(f"{prefix}enable_progress_bar", self.enable_progress_bar)
-        mlflow.log_param(f"{prefix}enable_model_summary", self.enable_model_summary)
+        mlflow.log_param(f"{prefix}enable_progress_bar",
+                         self.enable_progress_bar)
+        mlflow.log_param(f"{prefix}enable_model_summary",
+                         self.enable_model_summary)
         mlflow.log_param(f"{prefix}num_sanity_val_steps",
                          self.num_sanity_val_steps)
         for key, value in self.max_time.items():
             mlflow.log_param(f"{prefix}max_time.{key}", value)
         self.checkpoint.to_mlflow(prefix=prefix + 'checkpoint')
         self.early_stopping.to_mlflow(prefix=prefix + 'early_stopping')
+        mlflow.log_param(f"{prefix}gradient_clip_val", self.gradient_clip_val)
 
     @classmethod
     def _from_mlflow(cls, mlflow_run, prefix='', **kwargs) -> dict[str, Any]:
@@ -439,6 +448,11 @@ class LightningModel(MLFlowLoggedModel):
                 except ValueError:
                     max_time[time_key] = float(param_value)
         kwargs['max_time'] = max_time
+        kwargs['gradient_clip_val'] = mlflow_run.data.params.get(
+            f'{prefix}gradient_clip_val',
+            cls.model_fields['gradient_clip_val'].default)
+        if kwargs['gradient_clip_val'] == 'None':
+            kwargs['gradient_clip_val'] = None
         return kwargs
 
     @classmethod

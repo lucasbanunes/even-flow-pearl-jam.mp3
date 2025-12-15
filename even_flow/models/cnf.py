@@ -139,7 +139,7 @@ class CNF(L.LightningModule):
         z, _ = state
         divergence = self.compute_divergence(t, z)
 
-        return z, divergence.reshape(-1, 1) * self.div_scale
+        return z, divergence * self.div_scale
 
     def compute_divergence(self,
                            t: torch.Tensor,
@@ -289,7 +289,7 @@ class CNFHutchingson(CNF):
         return z, divergence.reshape(-1, 1)
 
 
-type TraceScaleType = Annotated[
+type DivScaleType = Annotated[
     float,
     Field(description="Scaling factor for the divergence estimate.",
           gt=0,
@@ -311,7 +311,7 @@ class CNFModel(LightningModel):
     rtol: RtolType = 1e-5
     learning_rate: LearningRateType = 1e-3
     input_shape: tuple[int, ...]
-    div_scale: TraceScaleType = 1e-2
+    div_scale: DivScaleType = 1e-2
 
     lightning_module: Annotated[
         CNF | None,
@@ -619,9 +619,15 @@ class CNFTorchModule(BaseNNModule):
         self.atol = model_config.atol
         self.rtol = model_config.rtol
         self.learning_rate = model_config.learning_rate
+        self.div_scale = torch.FloatTensor([model_config.div_scale])
 
         self.train_metrics = MetricCollection({
-            'loss': MeanMetric()
+            'loss': MeanMetric(),
+            'int_div': MeanMetric(),
+            'logp_zf': MeanMetric(),
+            'logp_z0': MeanMetric(),
+            'zf': MeanMetric(),
+            'z0': MeanMetric()
         })
         self.val_metrics = self.train_metrics.clone()
         self.test_metrics = self.val_metrics.clone()
@@ -631,11 +637,6 @@ class CNFTorchModule(BaseNNModule):
         self.val_metrics.reset()
         self.test_metrics.reset()
         self.vector_field.reset_metrics()
-
-    def get_test_metrics(self) -> dict[str, Any]:
-        metrics = self.test_metrics.compute()
-        metrics['nfe'] = self.vector_field.nfe
-        return metrics
 
     def forward(self, z0: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         # div0 = self.compute_divergence(self.integration_times[0],
@@ -651,7 +652,7 @@ class CNFTorchModule(BaseNNModule):
             rtol=self.rtol,
             adjoint_params=self.vector_field.parameters()
         )
-        return z[-1], int_div[-1]
+        return z[-1], int_div[-1]/self.div_scale
 
     def augmented_function(self,
                            t: torch.Tensor,
@@ -659,7 +660,7 @@ class CNFTorchModule(BaseNNModule):
         z, _ = state
         divergence = self.compute_divergence(t, z)
 
-        return z, divergence
+        return z, divergence * self.div_scale
 
     @torch.enable_grad()
     def compute_divergence(self,
@@ -670,40 +671,103 @@ class CNFTorchModule(BaseNNModule):
         grad_outputs = torch.eye(
             z.shape[-1], dtype=z.dtype, device=z.device)
         grad_outputs = grad_outputs.expand(*z.shape, -1).movedim(-1, 0)
-        (jacobian,) = torch.autograd.grad(
+        jacobian = torch.autograd.grad(
             dzdt, z,
             grad_outputs=grad_outputs,
             create_graph=True, is_grads_batched=True
-        )
+        )[0]
         divergence = torch.einsum("i...i", jacobian)
 
         return divergence.reshape(-1, 1)
 
-    def log_prob(self, z0: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        zf, div_int = self.forward(z0)
+    def base_step(self,
+                  z0: torch.Tensor
+                  ) -> tuple[
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor,
+            torch.Tensor]:
+        zf, int_div = self.forward(z0)
         logp_zf = self.base_distribution.log_prob(zf).reshape(-1, 1)
-        return zf, div_int, logp_zf + div_int
+        mean_logp_z0 = (logp_zf + int_div).mean()
+        mean_int_div = int_div.mean()
+        zf_mean = zf.mean()
+        z0_mean = z0.mean()
+        mean_logp_zf = logp_zf.mean()
+        loss = -mean_logp_z0
+        return loss, mean_logp_z0, mean_logp_zf, mean_int_div, zf_mean, z0_mean
 
     def training_step(self,
                       batch: tuple[torch.Tensor],
-                      batch_idx: torch.Tensor):
-        _, _, log_prob = self.log_prob(batch[0])
-        loss = -log_prob.mean()
-        return loss
+                      batch_idx: torch.Tensor) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        loss, mean_logp_z0, mean_logp_zf, mean_int_div, zf_mean, z0_mean = \
+            self.base_step(batch[0])
+
+        batch_metrics = {
+            "train_loss": loss,
+            "train_logp_z0": mean_logp_z0,
+            "train_logp_zf": mean_logp_zf,
+            "train_int_div": mean_int_div,
+            "train_zf": zf_mean,
+            "train_z0": z0_mean
+        }
+        self.train_metrics['loss'].update(loss)
+        self.train_metrics['logp_z0'].update(mean_logp_z0)
+        self.train_metrics['logp_zf'].update(mean_logp_zf)
+        self.train_metrics['int_div'].update(mean_int_div)
+        self.train_metrics['zf'].update(zf_mean)
+        self.train_metrics['z0'].update(z0_mean)
+        return loss, batch_metrics
+
+    def on_train_epoch_end(self) -> dict[str, torch.Tensor]:
+        metrics = self.train_metrics.compute()
+        metrics['nfe'] = torch.tensor(self.vector_field.nfe)
+        # Reset metrics after each epoch
+        self.train_metrics.reset()
+        self.vector_field.reset_metrics()
+        return metrics
 
     def validation_step(self,
                         batch: tuple[torch.Tensor],
                         batch_idx: torch.Tensor):
-        _, _, log_prob = self.log_prob(batch[0])
-        loss = -log_prob.mean()
-        self.val_metrics.update(loss)
+        loss, mean_logp_z0, mean_logp_zf, mean_int_div, zf_mean, z0_mean = \
+            self.base_step(batch[0])
+        self.val_metrics['loss'].update(loss)
+        self.val_metrics['logp_z0'].update(mean_logp_z0)
+        self.val_metrics['logp_zf'].update(mean_logp_zf)
+        self.val_metrics['int_div'].update(mean_int_div)
+        self.val_metrics['zf'].update(zf_mean)
+        self.val_metrics['z0'].update(z0_mean)
+
+    def on_validation_epoch_end(self):
+        metrics = self.val_metrics.compute()
+        metrics['nfe'] = torch.tensor(self.vector_field.nfe)
+        # Reset metrics after each epoch
+        self.val_metrics.reset()
+        self.vector_field.reset_metrics()
+        return metrics
 
     def test_step(self,
                   batch: tuple[torch.Tensor],
                   batch_idx: torch.Tensor):
-        _, _, log_prob = self.log_prob(batch[0])
-        loss = -log_prob.mean()
-        self.test_metrics.update(loss)
+        loss, mean_logp_z0, mean_logp_zf, mean_int_div, zf_mean, z0_mean = \
+            self.base_step(batch[0])
+        self.test_metrics['loss'].update(loss)
+        self.test_metrics['logp_z0'].update(mean_logp_z0)
+        self.test_metrics['logp_zf'].update(mean_logp_zf)
+        self.test_metrics['int_div'].update(mean_int_div)
+        self.test_metrics['zf'].update(zf_mean)
+        self.test_metrics['z0'].update(z0_mean)
+
+    def on_test_epoch_end(self):
+        metrics = self.test_metrics.compute()
+        metrics['nfe'] = torch.tensor(self.vector_field.nfe)
+        # Reset metrics after each epoch
+        self.test_metrics.reset()
+        self.vector_field.reset_metrics()
+        return metrics
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(
@@ -742,6 +806,7 @@ class CNFTorchModel(TorchModel):
     rtol: RtolType = 1e-5
     learning_rate: LearningRateType = 1e-3
     input_shape: tuple[int, ...]
+    div_scale: DivScaleType = 1e-2
 
     torch_module: Annotated[
         CNFTorchModule | None,

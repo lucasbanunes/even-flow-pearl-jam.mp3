@@ -1,5 +1,5 @@
 from tempfile import TemporaryDirectory
-from typing import Annotated, ClassVar, Type, Any, Self
+from typing import Annotated, ClassVar, Iterable, Type, Any, Self
 from datetime import datetime, timezone
 from functools import cached_property
 from abc import abstractmethod
@@ -24,26 +24,44 @@ from ..mlflow import tmp_artifact_download
 
 class BaseNNModule(nn.Module):
 
+    def on_train_epoch_start(self) -> None:
+        pass
+
     def training_step(self,
                       batch: tuple[torch.Tensor, ...],
-                      batch_idx: int) -> torch.Tensor:
+                      batch_idx: int) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         raise NotImplementedError(
             "The training_step method must be implemented by the subclass."
         )
 
+    def on_train_epoch_end(self) -> dict[str, torch.Tensor]:
+        return {}
+
+    def on_validation_epoch_start(self) -> None:
+        pass
+
     def validation_step(self,
                         batch: tuple[torch.Tensor, ...],
-                        batch_idx: int) -> torch.Tensor:
+                        batch_idx: int) -> None:
         raise NotImplementedError(
-            "The validation_step method must be implemented by the subclass."
+            "The training_step method must be implemented by the subclass."
         )
+
+    def on_validation_epoch_end(self) -> dict[str, torch.Tensor]:
+        return {}
+
+    def on_test_epoch_start(self) -> None:
+        pass
 
     def test_step(self,
                   batch: tuple[torch.Tensor, ...],
-                  batch_idx: int) -> torch.Tensor:
+                  batch_idx: int) -> None:
         raise NotImplementedError(
-            "The test_step method must be implemented by the subclass."
+            "The training_step method must be implemented by the subclass."
         )
+
+    def on_test_epoch_end(self) -> dict[str, torch.Tensor]:
+        return {}
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         raise NotImplementedError(
@@ -53,11 +71,6 @@ class BaseNNModule(nn.Module):
     def reset_metrics(self):
         raise NotImplementedError(
             "The reset_metrics method must be implemented by the subclass."
-        )
-
-    def get_test_metrics(self):
-        raise NotImplementedError(
-            "The get_test_metrics method must be implemented by the subclass."
         )
 
 
@@ -77,6 +90,7 @@ class TorchModel(MLFlowLoggedModel):
 
     max_epochs: MaxEpochsType = 3
     verbose: TrainerTestVerbosityType = True
+    log_every_step: int = 50
 
     early_stopping: EarlyStopping = EarlyStopping()
 
@@ -109,9 +123,8 @@ class TorchModel(MLFlowLoggedModel):
         logger = get_logger()
         fit_start = datetime.now(timezone.utc)
         logger.debug('Starting training process...')
-        if self.torch_module is None:
-            logger.debug('Creating new Torch module...')
-            self.torch_module = self.get_new_torch_module()
+
+        self.torch_module = self.get_new_torch_module()
 
         optimizer = self.torch_module.configure_optimizers()
         current_step = 0
@@ -124,57 +137,55 @@ class TorchModel(MLFlowLoggedModel):
             if not str(e).startswith('`val_dataloader` must be implemented'):
                 raise e
 
-        with torch.enable_grad():
-            for epoch in trange(self.max_epochs, desc='Epochs'):
-                train_dataloader_iterator = tqdm(
-                    enumerate(train_dataloader),
-                    total=len(train_dataloader),
+        for epoch in trange(self.max_epochs, desc='Epochs'):
+
+            train_dataloader_iterator = tqdm(
+                enumerate(train_dataloader),
+                total=len(train_dataloader),
+            )
+            val_dataloader_iterator = tqdm(
+                enumerate(val_dataloader),
+                total=len(val_dataloader),
+            ) if val_dataloader is not None else None
+
+            epoch_start = datetime.now(timezone.utc).timestamp()
+
+            mlflow.log_metric(
+                f"{prefix}.epoch",
+                epoch,
+                step=current_step
+            )
+
+            current_step, epoch_metrics = self.training_epoch(
+                train_dataloader_iterator,
+                optimizer,
+                current_step=current_step
+            )
+
+            if val_dataloader_iterator is not None:
+                val_epoch_metrics = self.validation_epoch(
+                    val_dataloader_iterator
                 )
-                val_dataloader_iterator = tqdm(
-                    enumerate(val_dataloader),
-                    total=len(val_dataloader),
-                ) if val_dataloader is not None else None
-                epoch_start = datetime.now(timezone.utc).timestamp()
-                training_loss_sum = 0
-                for batch_index, batch in train_dataloader_iterator:
+                epoch_metrics.update(val_epoch_metrics)
 
-                    current_step += 1
-                    mlflow.log_metric(
-                        f"{prefix}.epoch",
-                        epoch,
-                        step=current_step
-                    )
-                    loss = self.torch_module.training_step(batch, batch_index)
-                    mlflow.log_metric(
-                        f"{prefix}.training_loss",
-                        loss.item(),
-                        step=current_step
-                    )
-                    optimizer.zero_grad()
-                    loss.backward()
-                    optimizer.step()
-
-                    training_loss_sum += loss.item()
-
-                if val_dataloader_iterator is None:
-                    continue
-
-                for batch_index, batch in val_dataloader_iterator:
-                    self.torch_module.validation_step(
-                        batch, batch_index)
-
-                epoch_end = datetime.now(timezone.utc).timestamp()
+            for key, value in epoch_metrics.items():
                 mlflow.log_metric(
-                    f"{prefix}.epoch_duration",
-                    epoch_end - epoch_start,
+                    key,
+                    value.item(),
                     step=current_step
                 )
-                training_loss_epoch = training_loss_sum / len(train_dataloader)
-                mlflow.log_metric(
-                    f"{prefix}.training_loss_epoch",
-                    training_loss_epoch,
-                    step=current_step
-                )
+
+            epoch_end = datetime.now(timezone.utc).timestamp()
+            mlflow.log_metric(
+                f"{prefix}.epoch_duration",
+                epoch_end - epoch_start,
+                step=current_step
+            )
+
+            if self.early_stopping.should_stop_dict(epoch_metrics):
+                logger.info(
+                    f'Early stopping triggered at epoch {epoch}.')
+                break
 
         logger.debug('Training completed.')
         fit_end = datetime.now(timezone.utc)
@@ -202,26 +213,79 @@ class TorchModel(MLFlowLoggedModel):
 
         return model_info
 
+    @torch.enable_grad()
+    def training_epoch(self,
+                       train_dataloader_iterator: Iterable[tuple[int, Any]],
+                       optimizer: torch.optim.Optimizer,
+                       current_step: int) -> tuple[int, dict[str, torch.Tensor]]:
+        self.torch_module.on_train_epoch_start()
+
+        for batch_index, batch in train_dataloader_iterator:
+
+            optimizer.zero_grad()
+
+            loss, metrics_to_log = self.torch_module.training_step(
+                batch, batch_index)
+            if batch_index % self.log_every_step == 0:
+                mlflow.log_metric(
+                    'training_loss',
+                    loss.item(),
+                    step=current_step
+                )
+                for key, value in metrics_to_log.items():
+                    mlflow.log_metric(
+                        f"train_{key}_step",
+                        value.item(),
+                        step=current_step
+                    )
+
+            loss.backward()
+
+            optimizer.step()
+
+            current_step += 1
+
+        metrics_to_log = self.torch_module.on_train_epoch_end()
+        epoch_metrics = {
+            f"train_{key}_epoch": value for key, value in metrics_to_log.items()
+        }
+
+        return current_step, epoch_metrics
+
+    def validation_epoch(self,
+                         val_dataloader_iterator: Iterable[tuple[int, Any]]
+                         ) -> dict[str, torch.Tensor]:
+        self.torch_module.on_validation_epoch_start()
+        for batch_index, batch in val_dataloader_iterator:
+            self.torch_module.validation_step(batch, batch_index)
+        metrics_to_log = self.torch_module.on_validation_epoch_end()
+        epoch_metrics = {
+            f"val_{key}": value for key, value in metrics_to_log.items()
+        }
+        return epoch_metrics
+
     def evaluate(self,
-                 dataloader: torch.utils.data.DataLoader) -> dict[str, Any]:
+                 dataloader: torch.utils.data.DataLoader) -> dict[str, float]:
+        self.torch_module.on_test_epoch_start()
         for i, batch in enumerate(dataloader):
             self.torch_module.test_step(batch, i)
-            metrics = self.torch_module.get_test_metrics()
-            self.torch_module.reset_metrics()
-        return metrics
+        metrics = self.torch_module.on_test_epoch_end()
+        return {k: v.item() for k, v in metrics.items()}
 
     def _to_mlflow(self, prefix=''):
         if prefix:
             prefix += '.'
         mlflow.log_param(f"{prefix}max_epochs", self.max_epochs)
         mlflow.log_param(f"{prefix}verbose", self.verbose)
-        self.early_stopping.to_mlflow(prefix=prefix + 'early_stopping')
+        mlflow.log_param(f"{prefix}log_every_step", self.log_every_step)
+        self.early_stopping.to_mlflow(prefix=prefix)
 
     @classmethod
     def _from_mlflow(cls, mlflow_run, prefix='', **kwargs) -> dict[str, Any]:
         unformatted_prefix = prefix
         if prefix:
             prefix += "."
+
         kwargs['max_epochs'] = int(mlflow_run.data.params.get(
             f'{prefix}max_epochs',
             cls.model_fields['max_epochs'].default))
@@ -231,9 +295,14 @@ class TorchModel(MLFlowLoggedModel):
             str(cls.model_fields['verbose'].default))
         kwargs['verbose'] = verbose_str.lower() == 'true'
 
+        kwargs['log_every_step'] = int(mlflow_run.data.params.get(
+            f'{prefix}log_every_step',
+            cls.model_fields['log_every_step'].default))
+
         kwargs['early_stopping'] = EarlyStopping.from_mlflow(
             mlflow_run,
-            prefix=prefix + 'early_stopping')
+            prefix=f'{prefix}early_stopping')
+
         kwargs['torch_module'] = cls.load_module_from_checkpoint(
             run_id=mlflow_run.info.run_id,
             prefix=unformatted_prefix
