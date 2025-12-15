@@ -27,11 +27,13 @@ warnings.filterwarnings("ignore")
 
 
 def run_job(job, mlflow_experiment_name):
+    mlflow.enable_system_metrics_logging()
     mlflow.set_experiment(mlflow_experiment_name)
     job.run()
 
 
 logger = set_logger()
+mlflow_client = mlflow.MlflowClient()
 
 train_samples = 10000
 val_samples = 1000
@@ -232,13 +234,22 @@ activation_options = ['gelu', 'tanh']
 #     jobs_to_run.append((job, experiment_name))
 
 
-experiment_name = 'Moons Exact CNF Tuple Adjoint Parameters'
+experiment_name = 'Moons Exact CNF Corrected Div Scale'
+experiment_description = """
+CNF treinado no conjunto MOONS. Implementado com o div scale corrigido. Anteriormente havia feito testes com valores muito pequenos.
+Primeira implementação com log de todas as métricas intermediárias para cálculo do logp da distribuição alvo para debug.
+"""
+mlflow_client.create_experiment(
+    experiment_name,
+    tags={"mlflow.note.content": experiment_description}
+)
 
 neuron_options = [
     [2, 2],
     [2, 2, 2, 2],
     [8, 8]
-]
+] + neuron_options
+rtol = 1e-2
 for i, (activation, neurons_per_layer) in enumerate(product(activation_options, neuron_options)):
     job = MoonsTimeEmbeddingMLPCNFJob(
         name=f'exact-cnf-moons-{i}',
@@ -254,6 +265,7 @@ for i, (activation, neurons_per_layer) in enumerate(product(activation_options, 
             adjoint=True,
             base_distribution='standard_normal',
             max_epochs=max_epochs,
+            rtol=rtol,
             checkpoint=dict(
                 monitor='val_loss',
                 mode='min',
@@ -309,7 +321,7 @@ logs_dir = Path(__file__).parent / 'logs' / \
 executor = submitit.AutoExecutor(folder=logs_dir)
 executor.update_parameters(
     name="run_moons",
-    slurm_array_parallelism=4,
+    slurm_array_parallelism=6,
     timeout_min=12*60,
     cpus_per_task=8,
     slurm_partition="gpu",
