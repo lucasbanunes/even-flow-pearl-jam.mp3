@@ -4,9 +4,8 @@ from even_flow.models.cnf import TimeEmbeddingMLPCNFModel
 def test_cnf_sample():
     cnf_model = TimeEmbeddingMLPCNFModel(
         vector_field=dict(
-            input_dims=2,
-            time_embed_dims=3,
-            time_embed_freq=10,
+            input_dim=2,
+            freqs=3,
             neurons_per_layer=[13, 13, 2],
             activations=['tanh', 'tanh', 'linear'],
         ),

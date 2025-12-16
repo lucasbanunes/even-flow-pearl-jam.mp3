@@ -6,17 +6,16 @@ dataset:
 model:
   input_shape: [2]
   vector_field:
-    input_dims: 2
-    time_embed_dims: 3
-    time_embed_freq: 10
+    input_dim: 2
+    freqs: 3
     neurons_per_layer:
       - 13
       - 13
       - 2
     activations:
-      - tanh
-      - tanh
-      - linear
+      - gelu
+      - gelu
+      - gelu
   early_stopping:
     monitor: val_loss
     mode: min

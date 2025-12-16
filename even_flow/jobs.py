@@ -13,6 +13,7 @@ from mlflow.entities import Run
 
 from .utils import get_logger
 from .slurm import SlurmEnvironment
+from .mlflow import MLFlowConfig
 
 DEFAULT_TRAINING_JOB_METRICS = {
     'train': {},
@@ -64,7 +65,7 @@ class BaseJob(BaseModel, ABC):
     name: NameType = None
     prefix: str = ''
     slurm: SlurmEnvironment = SlurmEnvironment()
-    # mlflow_run: RunType = None
+    mlflow_config: MLFlowConfig = MLFlowConfig()
 
     @abstractmethod
     def _run(self, tmp_dir: Path, run: mlflow.entities.Run):
@@ -76,6 +77,7 @@ class BaseJob(BaseModel, ABC):
         logger.debug('Started run...')
         if self.id_ is not None:
             raise ValueError("Cannot run a job with a predefined id_.")
+        self.mlflow_config.set_configs()
         with (mlflow.start_run(run_name=self.name) as active_run,
               TemporaryDirectory() as tmp_dir):
             self.id_ = active_run.info.run_id

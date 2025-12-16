@@ -4,6 +4,7 @@ from tempfile import TemporaryDirectory
 from contextlib import contextmanager
 import mlflow
 import json
+from pydantic import BaseModel
 
 
 @contextmanager
@@ -54,3 +55,30 @@ def load_json(
     with tmp_artifact_download(run_id, artifact_path) as tmp_path:
         with open(tmp_path, 'r') as f:
             return json.load(f)
+
+
+class MLFlowConfig(BaseModel):
+    """
+    Pydantic model for MLflow configuration.
+
+    Attributes
+    ----------
+    experiment_name : str
+        The name of the MLflow experiment.
+    tracking_uri : str
+        The URI of the MLflow tracking server.
+    """
+
+    experiment_name: str | None = None
+    tracking_uri: str | None = None
+
+    def set_configs(self):
+        """
+        Sets the MLflow tracking URI and experiment name based on the
+        configuration.
+        """
+        if self.tracking_uri is not None:
+            mlflow.set_tracking_uri(self.tracking_uri)
+
+        if self.experiment_name is not None:
+            mlflow.set_experiment(self.experiment_name)

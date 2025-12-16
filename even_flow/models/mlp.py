@@ -9,10 +9,10 @@ instantiated when requested.
 This module focuses on a compact, configuration-driven builder used by the
 vector-field and model setup code.
 """
-
+import math
 import json
 from tempfile import TemporaryDirectory
-from typing import Annotated, Any, ClassVar, Self
+from typing import Annotated, Any, ClassVar
 from pathlib import Path
 import torch
 import torch.nn as nn
@@ -21,7 +21,6 @@ import mlflow
 
 from ..pydantic import MLFlowLoggedModel
 from ..torch import TORCH_MODULES
-from ..utils import interleave_columns
 from ..mlflow import load_json as mlflow_load_json
 
 
@@ -30,7 +29,7 @@ type DimsType = Annotated[
     list[int],
     Field(
         min_length=2,
-        description="List of layer dimensions; must have at least one entry."
+        description="List of layer dimensions. must have at least one entry."
     )
 ]
 type ActivationsType = Annotated[
@@ -42,17 +41,8 @@ type ActivationsType = Annotated[
 ]
 
 
-def build_mlp(
-    dims: DimsType,
-    activations: ActivationsType
-) -> nn.Sequential:
-    """Build a simple MLP as an ``nn.Sequential``.
-
-    The function constructs a sequential model by creating a linear layer for
-    each consecutive pair of dimensions in ``dims`` and optionally inserting
-    activation modules between linear layers. Activation modules are created
-    by calling :func:`torch_module_from_string` with the provided activation
-    name.
+class MLP(nn.Sequential):
+    """Simple MLP constructed via ``build_mlp``.
 
     Parameters
     ----------
@@ -65,42 +55,23 @@ def build_mlp(
         the top of this module. For example ``['relu', None, 'tanh']`` will
         insert a ReLU after the first linear layer, no activation after the
         second, and a Tanh after the third.
-
-    Returns
-    -------
-    torch.nn.Sequential
-        A sequential model that alternates ``nn.Linear`` layers with the
-        optional activation modules. Additionally, the returned module will
-        have an attribute ``example_input_array`` set to ``torch.randn(dims[0])``
-        (useful for tracing or model inspection in some tooling).
-
-        Notes
-        -----
-        - The function does not validate that ``len(activations) == len(dims)-1``;
-            the code will implicitly zip and ignore extra entries if lengths differ.
-        - Activation strings are resolved via ``TORCH_MODULES[activation]`` and
-            the resulting callable is instantiated without arguments. If the
-            mapping expects constructor arguments, update the call sites accordingly.
-        - The ``example_input_array`` attribute is set to a 1-D tensor; tooling
-            that expects a batch dimension may need to wrap it (e.g. ``unsqueeze(0)``).
-
-    Examples
-    --------
-    >>> model = build_mlp([4, 16, 8], ['relu', None])
-    >>> isinstance(model, nn.Sequential)
-    True
     """
-    model = nn.Sequential()
-    iterator = zip(dims[:-1],
-                   dims[1:],
-                   activations)
-    for input_dim, output_dim, activation in iterator:
-        model.append(nn.Linear(input_dim, output_dim))
-        if activation is None or activation == 'linear':
-            continue
-        model.append(TORCH_MODULES[activation]())
-    model.example_input_array = torch.randn(dims[0])
-    return model
+
+    def __init__(
+        self,
+        dims: DimsType,
+        activations: ActivationsType
+    ):
+        super().__init__()
+        iterator = zip(dims[:-1],
+                       dims[1:],
+                       activations)
+        for input_dim, output_dim, activation in iterator:
+            self.append(nn.Linear(input_dim, output_dim))
+            if activation is None or activation == 'linear':
+                continue
+            self.append(TORCH_MODULES[activation]())
+        self.example_input_array = torch.randn(dims[0])
 
 
 type InputDimsType = Annotated[
@@ -110,77 +81,37 @@ type InputDimsType = Annotated[
     )
 ]
 
-type TimeEmbedDimsType = Annotated[
+type TimeEmbedFreqType = Annotated[
     int,
     Field(
-        description="Dimensionality of the time embedding."
-    )
-]
-
-type TimeEmbedFreqType = Annotated[
-    float,
-    Field(
-        description="Base frequency for the time embedding."
+        description="Number of frequencies for time embedding."
     )
 ]
 
 
-class TimeEmbeddingMLP(nn.Module):
+class TimeEmbeddingMLP(MLP):
 
     def __init__(self,
-                 input_dims: InputDimsType,
-                 time_embed_dims: TimeEmbedDimsType,
-                 time_embed_freq: TimeEmbedFreqType,
-                 neurons_per_layer: DimsType,
-                 activations: ActivationsType):
-        super().__init__()
-
-        self.input_dims = input_dims
-        self.time_embed_dims = time_embed_dims
-        self.time_embed_freq = time_embed_freq
-        self.model_input_dims = (self.input_dims +
-                                 2 * (self.time_embed_dims // 2))
-        self.model_dims = [self.model_input_dims] + neurons_per_layer
-        self.output_dims = self.model_dims[-1]
-        self.activations = activations
-        self.model = build_mlp(self.model_dims, self.activations)
-        self.nfe = 0
-
-    def time_embedding(self, t: torch.Tensor) -> torch.Tensor:
-        half_dim = self.time_embed_dims // 2
-        freq_exponents = torch.arange(0, half_dim, dtype=t.dtype) / half_dim
-        # Shape: (half_dim,)
-        freqs = 1.0 / (self.time_embed_freq ** freq_exponents)
-        args = t * freqs.view(1, half_dim)  # Shape: (batch_size, half_dim)
-        sin = torch.sin(args)
-        cos = torch.cos(args)
-        # Shape: (batch_size, time_embed_dims)
-        return interleave_columns(sin, cos)
+                 model_config: 'TimeEmbeddingMLPConfig'):
+        self.input_dim = model_config.input_dim
+        self.real_dims = model_config.input_dim + 2 * model_config.freqs
+        self.freqs = model_config.freqs
+        neurons = [self.real_dims] + model_config.neurons_per_layer
+        super().__init__(
+            dims=neurons,
+            activations=model_config.activations
+        )
+        pi = torch.tensor(math.pi)
+        self.register_buffer("freqs_array", torch.linspace(
+            0, 2*pi, steps=model_config.freqs, dtype=torch.float32))
+        self.nfe = torch.tensor(0)
 
     def forward(self, t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-        t = torch.full((x.shape[0], 1), t.float().item())
-        model_input = torch.cat([x, self.time_embedding(t)], dim=-1)
+        t = torch.full((x.shape[0], 1), t.float().to(x.dtype).item())
+        t = self.freqs_array * t
+        model_input = torch.cat([t.cos(), t.sin(), x], dim=-1)
         self.nfe += 1
-        return self.model(model_input)
-
-    @classmethod
-    def pydantic_before_validator(cls, v: Any) -> Self:
-        if isinstance(v, cls):
-            return v
-        elif isinstance(v, dict):
-            return cls(**v)
-        else:
-            raise TypeError(f"Cannot convert {type(v)} to {cls}.")
-
-    @staticmethod
-    def pydantic_plain_serializer(v: 'TimeEmbeddingMLP') -> dict[str, Any]:
-        return {
-            "input_dims": v.input_dims,
-            "time_embed_dims": v.time_embed_dims,
-            "time_embed_freq": v.time_embed_freq,
-            "model_dims": v.model_dims,
-            "activations": v.activations,
-        }
+        return super().forward(model_input)
 
     def reset_metrics(self) -> None:
         self.nfe = 0
@@ -190,20 +121,13 @@ class TimeEmbeddingMLPConfig(MLFlowLoggedModel):
 
     JSON_ARTIFACT_PATH: ClassVar[str] = 'time_embedding_mlp_config.json'
 
-    input_dims: InputDimsType
-    time_embed_dims: TimeEmbedDimsType
-    time_embed_freq: TimeEmbedFreqType
+    input_dim: InputDimsType
+    freqs: TimeEmbedFreqType
     neurons_per_layer: DimsType
     activations: ActivationsType
 
     def as_nn_module(self) -> TimeEmbeddingMLP:
-        return TimeEmbeddingMLP(
-            input_dims=self.input_dims,
-            time_embed_dims=self.time_embed_dims,
-            time_embed_freq=self.time_embed_freq,
-            neurons_per_layer=self.neurons_per_layer,
-            activations=self.activations
-        )
+        return TimeEmbeddingMLP(self)
 
     @classmethod
     def _from_mlflow(cls, mlflow_run, prefix='', **kwargs) -> dict[str, Any]:
@@ -221,9 +145,8 @@ class TimeEmbeddingMLPConfig(MLFlowLoggedModel):
         if prefix:
             file_prefix = prefix.replace('.', '_') + '_'
             prefix += '.'
-        mlflow.log_param(f'{prefix}input_dims', self.input_dims)
-        mlflow.log_param(f'{prefix}time_embed_dims', self.time_embed_dims)
-        mlflow.log_param(f'{prefix}time_embed_freq', self.time_embed_freq)
+        mlflow.log_param(f'{prefix}input_dim', self.input_dim)
+        mlflow.log_param(f'{prefix}freqs', self.freqs)
         mlflow.log_param(f'{prefix}neurons_per_layer',
                          json.dumps(self.neurons_per_layer))
         mlflow.log_param(f'{prefix}activations', json.dumps(self.activations))
