@@ -362,6 +362,8 @@ class LightningModel(MLFlowLoggedModel):
         active_run = mlflow.active_run()
         experiment = mlflow_client.get_experiment(
             active_run.info.experiment_id)
+        logger = get_logger()
+        logger.info(f'Saving on MLflow experiment: {experiment.name}')
         lightning_mlflow_logger = MLFlowLogger(
             run_name=active_run.data.tags['mlflow.runName'],
             run_id=active_run.info.run_id,

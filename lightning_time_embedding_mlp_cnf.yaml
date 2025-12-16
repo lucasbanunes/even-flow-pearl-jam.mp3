@@ -1,0 +1,32 @@
+name: Lightning CNF
+dataset:
+  batch_size: 32
+  train_samples: 10000
+  val_samples: 1000
+  test_samples: 1000
+model:
+  input_shape: [2]
+  vector_field:
+    input_dim: 2
+    freqs: 3
+    neurons_per_layer:
+      - 13
+      - 13
+      - 2
+    activations:
+      - gelu
+      - gelu
+      - gelu
+  early_stopping:
+    monitor: val_loss
+    mode: min
+  checkpoint:
+    monitor: val_loss
+    mode: min
+  max_epochs: 50
+  max_time:
+    minutes: 5
+  gradient_clip_val: 1.0
+mlflow_config:
+  experiment_name: Trace Comparison
+  tracking_uri: file:///home/lucasbanunes/workspaces/even-flow-pearl-jam.mp3/tests/data/mlruns

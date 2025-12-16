@@ -107,10 +107,31 @@ class CNF(L.LightningModule):
         self.test_metrics = self.val_metrics.clone()
 
     def reset_metrics(self):
+        self.reset_train_metrics()
+        self.reset_val_metrics()
+        self.reset_test_metrics()
+
+    def reset_train_metrics(self):
         self.train_metrics.reset()
+        self.vector_field.reset_metrics()
+
+    def reset_val_metrics(self):
         self.val_metrics.reset()
+        self.vector_field.reset_metrics()
+
+    def reset_test_metrics(self):
         self.test_metrics.reset()
         self.vector_field.reset_metrics()
+
+    def get_train_metrics(self) -> dict[str, Any]:
+        metrics = self.train_metrics.compute()
+        metrics['nfe'] = self.vector_field.nfe
+        return metrics
+
+    def get_val_metrics(self) -> dict[str, Any]:
+        metrics = self.val_metrics.compute()
+        metrics['nfe'] = self.vector_field.nfe
+        return metrics
 
     def get_test_metrics(self) -> dict[str, Any]:
         metrics = self.test_metrics.compute()
@@ -118,47 +139,47 @@ class CNF(L.LightningModule):
         return metrics
 
     def forward(self, z0: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        # div0 = self.compute_divergence(self.integration_times[0],
-        #                                z0)
+        # _, div0 = self.compute_divergence(self.integration_times[0],
+        #                                   z0)
         div0 = torch.zeros(z0.shape[0], 1, dtype=z0.dtype)
 
-        z, div_int = odeint_adjoint(
+        result = odeint_adjoint(
             self.augmented_function,
-            (z0, div0),
+            torch.cat([z0, div0], dim=-1),
             self.integration_times.type_as(z0),
             method=self.solver,
             atol=self.atol,
             rtol=self.rtol,
             adjoint_params=tuple(self.vector_field.parameters())
         )
-        return z[-1], div_int[-1]/self.div_scale
+        return result[-1, :, :-1], result[-1, :, -1]/self.div_scale
 
     def augmented_function(self,
                            t: torch.Tensor,
-                           state: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
-        z, _ = state
-        divergence = self.compute_divergence(t, z)
+                           state: torch.Tensor) -> torch.Tensor:
+        z = state[:, :-1]
+        dz, divergence = self.compute_divergence(t, z)
+        dstate = torch.cat([dz, divergence*self.div_scale], dim=-1)
+        return dstate
 
-        return z, divergence * self.div_scale
-
+    @torch.enable_grad()
     def compute_divergence(self,
                            t: torch.Tensor,
                            z: torch.Tensor) -> torch.Tensor:
-        with torch.enable_grad():
-            if not z.requires_grad:
-                z = z.clone().requires_grad_(True)
-            dzdt = self.vector_field.forward(t, z)
-            grad_outputs = torch.eye(
-                z.shape[-1], dtype=z.dtype, device=z.device)
-            grad_outputs = grad_outputs.expand(*z.shape, -1).movedim(-1, 0)
-            jacobian = torch.autograd.grad(
-                dzdt, z,
-                grad_outputs=grad_outputs,
-                create_graph=True, is_grads_batched=True
-            )[0]
-            divergence = torch.einsum("i...i", jacobian)
+        if not z.requires_grad:
+            z = z.clone().requires_grad_(True)
+        dz = self.vector_field.forward(t, z)
+        grad_outputs = torch.eye(
+            z.shape[-1], dtype=z.dtype, device=z.device)
+        grad_outputs = grad_outputs.expand(*z.shape, -1).movedim(-1, 0)
+        jacobian = torch.autograd.grad(
+            dz, z,
+            grad_outputs=grad_outputs,
+            create_graph=True, is_grads_batched=True
+        )[0]
+        divergence = torch.einsum("i...i", jacobian)
 
-        return divergence.reshape(-1, 1)
+        return dz, divergence.reshape(-1, 1)
 
     def base_step(self,
                   z0: torch.Tensor
@@ -201,7 +222,7 @@ class CNF(L.LightningModule):
 
     def on_train_epoch_end(self):
         # Reset metrics after each epoch
-        self.train_metrics.reset()
+        self.reset_train_metrics()
 
     def validation_step(self,
                         batch: tuple[torch.Tensor],
@@ -220,7 +241,7 @@ class CNF(L.LightningModule):
         for name, value in metric_values.items():
             self.log(f"val_{name}", value, prog_bar=True)
         # Reset metrics after each epoch
-        self.val_metrics.reset()
+        self.reset_val_metrics()
 
     def test_step(self,
                   batch: tuple[torch.Tensor],
@@ -241,20 +262,20 @@ class CNF(L.LightningModule):
         )
         return optimizer
 
+    @torch.no_grad()
     def sample(self, num_samples: int) -> torch.Tensor:
-        with torch.no_grad():
-            zf = self.base_distribution.sample((num_samples,))
-            integration_times_reversed = torch.flip(self.integration_times,
-                                                    dims=[0])
-            z0 = odeint(
-                self.vector_field,
-                zf,
-                integration_times_reversed.type_as(zf),
-                method=self.solver,
-                atol=self.atol,
-                rtol=self.rtol
-            )
-            return zf, z0[-1]
+        zf = self.base_distribution.sample((num_samples,))
+        integration_times_reversed = torch.flip(self.integration_times,
+                                                dims=[0])
+        z = odeint(
+            self.vector_field,
+            zf,
+            integration_times_reversed.type_as(zf),
+            method=self.solver,
+            atol=self.atol,
+            rtol=self.rtol
+        )
+        return zf, z[-1]
 
 
 class CNFHutchingson(CNF):
@@ -643,42 +664,43 @@ class CNFTorchModule(BaseNNModule):
         #                                z0)
         div0 = torch.zeros(z0.shape[0], 1, dtype=z0.dtype)
 
-        z, int_div = odeint_adjoint(
+        result = odeint_adjoint(
             self.augmented_function,
-            (z0, div0),
+            torch.cat([z0, div0], dim=-1),
             self.integration_times.type_as(z0),
             method=self.solver,
             atol=self.atol,
             rtol=self.rtol,
-            adjoint_params=self.vector_field.parameters()
+            adjoint_params=tuple(self.vector_field.parameters())
         )
-        return z[-1], int_div[-1]/self.div_scale
+        return result[-1, :, :-1], result[-1, :, -1]/self.div_scale
 
     def augmented_function(self,
                            t: torch.Tensor,
-                           state: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
-        z, _ = state
-        divergence = self.compute_divergence(t, z)
-
-        return z, divergence * self.div_scale
+                           state: torch.Tensor) -> torch.Tensor:
+        z = state[:, :-1]
+        dz, divergence = self.compute_divergence(t, z)
+        dstate = torch.cat([dz, divergence*self.div_scale], dim=-1)
+        return dstate
 
     @torch.enable_grad()
     def compute_divergence(self,
                            t: torch.Tensor,
                            z: torch.Tensor) -> torch.Tensor:
-        z = z.clone().requires_grad_(True)
-        dzdt = self.vector_field.forward(t, z)
+        if not z.requires_grad:
+            z = z.clone().requires_grad_(True)
+        dz = self.vector_field.forward(t, z)
         grad_outputs = torch.eye(
             z.shape[-1], dtype=z.dtype, device=z.device)
         grad_outputs = grad_outputs.expand(*z.shape, -1).movedim(-1, 0)
         jacobian = torch.autograd.grad(
-            dzdt, z,
+            dz, z,
             grad_outputs=grad_outputs,
             create_graph=True, is_grads_batched=True
         )[0]
         divergence = torch.einsum("i...i", jacobian)
 
-        return divergence.reshape(-1, 1)
+        return dz, divergence.reshape(-1, 1)
 
     def base_step(self,
                   z0: torch.Tensor

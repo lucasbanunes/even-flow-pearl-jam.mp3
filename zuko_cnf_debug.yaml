@@ -1,0 +1,16 @@
+name: CNF Zuko
+dataset:
+  batch_size: 32
+  train_samples: 10000
+  val_samples: 1000
+  test_samples: 1000
+model:
+  features: 2
+  hidden_features: [64, 64]
+  activation: gelu
+  max_epochs: 10
+  max_time:
+    minutes: 5
+mlflow_config:
+  experiment_name: Trace Comparison
+  tracking_uri: file:///home/lucasbanunes/workspaces/even-flow-pearl-jam.mp3/tests/data/mlruns
