@@ -1,11 +1,12 @@
-from even_flow.utils import set_logger
+from even_flow.utils import set_logger, get_logger
 from even_flow.moons.jobs import (
-    MoonsTimeEmbeddingMLPCNFTorchJob,
+    MoonsTimeEmbeddingMLPCNFJob,
 )
 from even_flow.moons.dataset import MoonsDataset
 from even_flow.models.cnf import (
-    TimeEmbeddingMLPCNFTorchModel,
+    TimeEmbeddingMLPCNFModel,
 )
+from even_flow.jobs import BaseJob
 from itertools import product
 import mlflow
 import warnings
@@ -13,13 +14,16 @@ import submitit
 from pathlib import Path
 from datetime import datetime
 import typer
-from typing import Annotated
+from typing import Annotated, Literal
+from joblib import Parallel, delayed
 warnings.filterwarnings("ignore")
 
 
 def run_job(job, mlflow_experiment_name):
     mlflow.enable_system_metrics_logging()
     mlflow.set_experiment(mlflow_experiment_name)
+    logger = get_logger()
+    logger.info(f'Running job: {job.name}')
     job.run()
 
 
@@ -44,43 +48,92 @@ dataset = MoonsDataset(
 
 app = typer.Typer()
 
+SchedulerTypes = Literal['slurm', 'local']
+
+type JobListType = list[tuple[BaseJob, str]]
+
+
+def slurm_scheduler(
+    job_list: JobListType, name: str, n_jobs: int, timeout: int,
+    logs_dir: Path
+) -> None:
+
+    executor = submitit.AutoExecutor(folder=logs_dir)
+    executor.update_parameters(
+        name=name,
+        slurm_array_parallelism=n_jobs,
+        timeout_min=timeout,
+        cpus_per_task=8,
+        slurm_partition="gpu",
+        stderr_to_stdout=True
+    )
+    with executor.batch():
+        for job, mlflow_experiment_name in job_list:
+            logger.info(f'Submitting job: {job.name}')
+            executor.submit(run_job, job, mlflow_experiment_name)
+
+
+def local_scheduler(
+    job_list: JobListType, n_jobs: int, **kwargs
+) -> None:
+    if n_jobs == 1:
+        for job, mlflow_experiment_name in job_list:
+            run_job(job, mlflow_experiment_name)
+        return
+
+    job_pool = Parallel(n_jobs=n_jobs)
+    job_pool(
+        delayed(run_job)(job, mlflow_experiment_name)
+        for job, mlflow_experiment_name in job_list
+    )
+
+
+SCHEDULERS = {
+    'slurm': slurm_scheduler,
+    'local': local_scheduler,
+}
+
+INPUT_DIM = 2
+
 
 @app.command()
 def main(
-    debug: Annotated[
-        bool,
+    scheduler: Annotated[
+        SchedulerTypes,
         typer.Option(
-            "--debug",
-            help="Run in debug mode with submitit DebugExecutor."
+            "--scheduler",
+            help="Scheduler to use.",
+            case_sensitive=False
         )
-    ] = False,
+    ],
     name: Annotated[
         str,
         typer.Option(
             "--name",
-            help="Name for the run."
+            help="Name for the run. Only works with slurm scheduler."
         )
     ] = 'run_moons',
     n_jobs: Annotated[
         int,
         typer.Option(
             "--n-jobs",
-            help="Number of jobs to run in parallel."
+            help="Number of jobs to run in parallel. Only works with slurm scheduler.",
+            min=-1
         )
     ] = 6,
     timeout: Annotated[
         int,
         typer.Option(
             "--timeout",
-            help="Timeout in minutes for each job."
+            help="Timeout in minutes for each job. Only works with slurm scheduler."
         )
     ] = 12*60,
 ):
     jobs_to_run = []
 
-    experiment_name = 'Moons Exact CNF Torch'
+    experiment_name = 'Moons Exact CNF'
     experiment_description = """
-CNF treinado no conjunto MOONS usando Torch vanilla como backend."""
+CNF treinado no conjunto MOONS usando Lightning como backend."""
     mlflow_client.create_experiment(
         experiment_name,
         tags={"mlflow.note.content": experiment_description}
@@ -94,19 +147,18 @@ CNF treinado no conjunto MOONS usando Torch vanilla como backend."""
         # [256, 256]
     ]
     activation_options = ['gelu', 'tanh']
-    max_epochs = 50
+    max_epochs = 1
     learning_rate = 1e-3
 
     for i, (activation, neurons_per_layer) in enumerate(product(activation_options, neuron_options)):
-        job = MoonsTimeEmbeddingMLPCNFTorchJob(
-            name=f'exact-cnf-moons-torch-{i}',
+        job = MoonsTimeEmbeddingMLPCNFJob(
+            name=f'exact-cnf-moons-{i}',
             dataset=dataset,
-            model=TimeEmbeddingMLPCNFTorchModel(
+            model=TimeEmbeddingMLPCNFModel(
                 vector_field=dict(
-                    input_dims=2,
-                    time_embed_dims=16,
-                    time_embed_freq=100,
-                    neurons_per_layer=neurons_per_layer + [2],
+                    input_dim=INPUT_DIM,
+                    freqs=3,
+                    neurons_per_layer=neurons_per_layer + [INPUT_DIM],
                     activations=(len(neurons_per_layer) + 1)*[activation],
                 ),
                 adjoint=True,
@@ -121,6 +173,13 @@ CNF treinado no conjunto MOONS usando Torch vanilla como backend."""
                     min_delta=1e-2,
                     stopping_threshold=-10
                 ),
+                checkpoint=dict(
+                    monitor='val_loss',
+                    mode='min',
+                ),
+                max_time={
+                    'hours': 11*60
+                }
             )
         )
         jobs_to_run.append((job, experiment_name))
@@ -128,23 +187,13 @@ CNF treinado no conjunto MOONS usando Torch vanilla como backend."""
     logs_dir = Path(__file__).parent / 'logs' / \
         f'run_moons_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
 
-    if debug:
-        executor = submitit.DebugExecutor(folder=logs_dir)
-    else:
-        executor = submitit.AutoExecutor(folder=logs_dir)
-
-    executor.update_parameters(
+    SCHEDULERS[scheduler](
+        job_list=jobs_to_run,
         name=name,
-        slurm_array_parallelism=n_jobs,
-        timeout_min=timeout,
-        cpus_per_task=8,
-        slurm_partition="gpu",
-        stderr_to_stdout=True
+        n_jobs=n_jobs,
+        timeout=timeout,
+        logs_dir=logs_dir
     )
-    with executor.batch():
-        for job, mlflow_experiment_name in jobs_to_run:
-            logger.info(f'Submitting job: {job.name}')
-            executor.submit(run_job, job, mlflow_experiment_name)
 
 
 if __name__ == "__main__":

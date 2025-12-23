@@ -141,12 +141,12 @@ class CNF(L.LightningModule):
     def forward(self, z0: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         # _, div0 = self.compute_divergence(self.integration_times[0],
         #                                   z0)
-        div0 = torch.zeros(z0.shape[0], 1, dtype=z0.dtype)
+        div0 = torch.zeros(z0.shape[0], 1, dtype=z0.dtype, device=z0.device)
 
         result = odeint_adjoint(
             self.augmented_function,
             torch.cat([z0, div0], dim=-1),
-            self.integration_times.type_as(z0),
+            self.integration_times.to(z0.device, dtype=z0.dtype),
             method=self.solver,
             atol=self.atol,
             rtol=self.rtol,
@@ -640,7 +640,7 @@ class CNFTorchModule(BaseNNModule):
         self.atol = model_config.atol
         self.rtol = model_config.rtol
         self.learning_rate = model_config.learning_rate
-        self.div_scale = torch.FloatTensor([model_config.div_scale])
+        self.register_buffer('div_scale', torch.FloatTensor([model_config.div_scale]))
 
         self.train_metrics = MetricCollection({
             'loss': MeanMetric(),

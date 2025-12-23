@@ -107,7 +107,7 @@ class TimeEmbeddingMLP(MLP):
         self.nfe = torch.tensor(0)
 
     def forward(self, t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-        t = torch.full((x.shape[0], 1), t.float().to(x.dtype).item())
+        t = torch.full((x.shape[0], 1), t.float().to(x.dtype).item(), device=x.device)
         t = self.freqs_array * t
         model_input = torch.cat([t.cos(), t.sin(), x], dim=-1)
         self.nfe += 1
